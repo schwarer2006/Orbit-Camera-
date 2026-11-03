@@ -1,0 +1,6 @@
+{
+  "name": "ORBIT Camera",
+  "description": "ORBIT Camera – Computational Art Photography. Erzeugt aus 30–100 Einzelaufnahmen künstlerische Mehrfachbelichtungen und Fusionskunstwerke.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
