@@ -9,8 +9,10 @@ import com.example.data.OrbitProjectRepository
 import com.example.engine.BitmapUtils
 import com.example.engine.FusionProgress
 import com.example.engine.OrbitFusionEngine
+import com.example.model.OrbitArtStyle
 import com.example.model.OrbitBlendMode
 import com.example.model.OrbitProject
+import com.example.model.OrbitStyleParameters
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -28,7 +30,11 @@ data class StudioUiState(
     val referenceBitmap: Bitmap? = null,
     val isRendering: Boolean = false,
     val renderProgress: FusionProgress? = null,
-    val abstractionLevel: Float = 50f,
+    val selectedArtStyle: OrbitArtStyle = OrbitArtStyle.IMPRESSIONIST,
+    val styleParameters: OrbitStyleParameters = OrbitArtStyle.IMPRESSIONIST.defaultParameters,
+    val individualShifts: Map<Int, Pair<Float, Float>> = emptyMap(),
+    val isAutoAligning: Boolean = false,
+    val autoAlignApplied: Boolean = false,
     val blendMode: OrbitBlendMode = OrbitBlendMode.WEIGHTED_AVERAGE,
     val selectedRefIndex: Int = 0,
     val offsetX: Float = 0f,
@@ -36,7 +42,10 @@ data class StudioUiState(
     val showOriginalComparison: Boolean = false,
     val exportedUri: Uri? = null,
     val message: String? = null
-)
+) {
+    val abstractionLevel: Float
+        get() = styleParameters.abstraction
+}
 
 sealed class StudioEffect {
     data class ExportSuccess(val uri: Uri, val message: String) : StudioEffect()
@@ -79,18 +88,30 @@ class StudioViewModel(
 
         _uiState.value = _uiState.value.copy(
             activeProject = project,
-            abstractionLevel = project.abstractionLevel,
+            selectedArtStyle = project.artStyle,
+            styleParameters = project.styleParams,
             blendMode = project.blendMode,
             selectedRefIndex = refIndex,
             offsetX = project.offsetX,
             offsetY = project.offsetY,
+            individualShifts = emptyMap(),
+            autoAlignApplied = false,
             renderedBitmap = null,
             referenceBitmap = null,
             exportedUri = null
         )
 
         loadReferenceBitmap(project, refIndex)
-        triggerFusion(project, project.abstractionLevel, project.blendMode, refIndex, project.offsetX, project.offsetY)
+        triggerFusion(
+            project = project,
+            artStyle = project.artStyle,
+            params = project.styleParams,
+            refIndex = refIndex,
+            offsetX = project.offsetX,
+            offsetY = project.offsetY,
+            shifts = emptyMap(),
+            blendMode = project.blendMode
+        )
     }
 
     private fun loadReferenceBitmap(project: OrbitProject, refIndex: Int) {
@@ -102,16 +123,137 @@ class StudioViewModel(
         }
     }
 
-    fun setAbstractionLevel(level: Float) {
-        _uiState.value = _uiState.value.copy(abstractionLevel = level)
+    fun setArtStyle(style: OrbitArtStyle) {
+        val currentParams = _uiState.value.styleParameters
+        // Keep user's current abstraction & stability or apply preset defaults
+        val newParams = style.defaultParameters.copy(
+            abstraction = currentParams.abstraction,
+            subjectStability = currentParams.subjectStability
+        )
+        _uiState.value = _uiState.value.copy(
+            selectedArtStyle = style,
+            styleParameters = newParams
+        )
         val project = _uiState.value.activeProject ?: return
-        triggerFusion(project, level, _uiState.value.blendMode, _uiState.value.selectedRefIndex, _uiState.value.offsetX, _uiState.value.offsetY)
+        triggerFusion(
+            project = project,
+            artStyle = style,
+            params = newParams,
+            refIndex = _uiState.value.selectedRefIndex,
+            offsetX = _uiState.value.offsetX,
+            offsetY = _uiState.value.offsetY,
+            shifts = _uiState.value.individualShifts,
+            blendMode = _uiState.value.blendMode
+        )
+    }
+
+    fun setAbstraction(value: Float) {
+        val updatedParams = _uiState.value.styleParameters.copy(abstraction = value)
+        _uiState.value = _uiState.value.copy(styleParameters = updatedParams)
+        val project = _uiState.value.activeProject ?: return
+        triggerFusion(
+            project = project,
+            artStyle = _uiState.value.selectedArtStyle,
+            params = updatedParams,
+            refIndex = _uiState.value.selectedRefIndex,
+            offsetX = _uiState.value.offsetX,
+            offsetY = _uiState.value.offsetY,
+            shifts = _uiState.value.individualShifts,
+            blendMode = _uiState.value.blendMode
+        )
+    }
+
+    fun setSubjectStability(value: Float) {
+        val updatedParams = _uiState.value.styleParameters.copy(subjectStability = value)
+        _uiState.value = _uiState.value.copy(styleParameters = updatedParams)
+        val project = _uiState.value.activeProject ?: return
+        triggerFusion(
+            project = project,
+            artStyle = _uiState.value.selectedArtStyle,
+            params = updatedParams,
+            refIndex = _uiState.value.selectedRefIndex,
+            offsetX = _uiState.value.offsetX,
+            offsetY = _uiState.value.offsetY,
+            shifts = _uiState.value.individualShifts,
+            blendMode = _uiState.value.blendMode
+        )
+    }
+
+    fun updateStyleParameters(params: OrbitStyleParameters) {
+        _uiState.value = _uiState.value.copy(styleParameters = params)
+        val project = _uiState.value.activeProject ?: return
+        triggerFusion(
+            project = project,
+            artStyle = _uiState.value.selectedArtStyle,
+            params = params,
+            refIndex = _uiState.value.selectedRefIndex,
+            offsetX = _uiState.value.offsetX,
+            offsetY = _uiState.value.offsetY,
+            shifts = _uiState.value.individualShifts,
+            blendMode = _uiState.value.blendMode
+        )
+    }
+
+    fun runAutoAlignment() {
+        val project = _uiState.value.activeProject ?: return
+        if (project.imagePaths.size <= 1) return
+
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isAutoAligning = true)
+            val shifts = OrbitFusionEngine.autoAlignImages(project.imagePaths, _uiState.value.selectedRefIndex)
+            _uiState.value = _uiState.value.copy(
+                isAutoAligning = false,
+                individualShifts = shifts,
+                autoAlignApplied = true,
+                message = "Automatische 2D-Ausrichtung angewendet"
+            )
+            triggerFusion(
+                project = project,
+                artStyle = _uiState.value.selectedArtStyle,
+                params = _uiState.value.styleParameters,
+                refIndex = _uiState.value.selectedRefIndex,
+                offsetX = _uiState.value.offsetX,
+                offsetY = _uiState.value.offsetY,
+                shifts = shifts,
+                blendMode = _uiState.value.blendMode
+            )
+        }
+    }
+
+    fun resetAlignment() {
+        _uiState.value = _uiState.value.copy(
+            individualShifts = emptyMap(),
+            autoAlignApplied = false,
+            offsetX = 0f,
+            offsetY = 0f,
+            message = "Ausrichtung zurückgesetzt"
+        )
+        val project = _uiState.value.activeProject ?: return
+        triggerFusion(
+            project = project,
+            artStyle = _uiState.value.selectedArtStyle,
+            params = _uiState.value.styleParameters,
+            refIndex = _uiState.value.selectedRefIndex,
+            offsetX = 0f,
+            offsetY = 0f,
+            shifts = emptyMap(),
+            blendMode = _uiState.value.blendMode
+        )
     }
 
     fun setBlendMode(mode: OrbitBlendMode) {
         _uiState.value = _uiState.value.copy(blendMode = mode)
         val project = _uiState.value.activeProject ?: return
-        triggerFusion(project, _uiState.value.abstractionLevel, mode, _uiState.value.selectedRefIndex, _uiState.value.offsetX, _uiState.value.offsetY)
+        triggerFusion(
+            project = project,
+            artStyle = _uiState.value.selectedArtStyle,
+            params = _uiState.value.styleParameters,
+            refIndex = _uiState.value.selectedRefIndex,
+            offsetX = _uiState.value.offsetX,
+            offsetY = _uiState.value.offsetY,
+            shifts = _uiState.value.individualShifts,
+            blendMode = mode
+        )
     }
 
     fun selectReferenceIndex(index: Int) {
@@ -119,13 +261,31 @@ class StudioViewModel(
         if (index !in project.imagePaths.indices) return
         _uiState.value = _uiState.value.copy(selectedRefIndex = index)
         loadReferenceBitmap(project, index)
-        triggerFusion(project, _uiState.value.abstractionLevel, _uiState.value.blendMode, index, _uiState.value.offsetX, _uiState.value.offsetY)
+        triggerFusion(
+            project = project,
+            artStyle = _uiState.value.selectedArtStyle,
+            params = _uiState.value.styleParameters,
+            refIndex = index,
+            offsetX = _uiState.value.offsetX,
+            offsetY = _uiState.value.offsetY,
+            shifts = _uiState.value.individualShifts,
+            blendMode = _uiState.value.blendMode
+        )
     }
 
     fun setOffset(x: Float, y: Float) {
         _uiState.value = _uiState.value.copy(offsetX = x, offsetY = y)
         val project = _uiState.value.activeProject ?: return
-        triggerFusion(project, _uiState.value.abstractionLevel, _uiState.value.blendMode, _uiState.value.selectedRefIndex, x, y)
+        triggerFusion(
+            project = project,
+            artStyle = _uiState.value.selectedArtStyle,
+            params = _uiState.value.styleParameters,
+            refIndex = _uiState.value.selectedRefIndex,
+            offsetX = x,
+            offsetY = y,
+            shifts = _uiState.value.individualShifts,
+            blendMode = _uiState.value.blendMode
+        )
     }
 
     fun toggleComparison(showOriginal: Boolean) {
@@ -135,16 +295,27 @@ class StudioViewModel(
     fun recompute() {
         val state = _uiState.value
         val project = state.activeProject ?: return
-        triggerFusion(project, state.abstractionLevel, state.blendMode, state.selectedRefIndex, state.offsetX, state.offsetY)
+        triggerFusion(
+            project = project,
+            artStyle = state.selectedArtStyle,
+            params = state.styleParameters,
+            refIndex = state.selectedRefIndex,
+            offsetX = state.offsetX,
+            offsetY = state.offsetY,
+            shifts = state.individualShifts,
+            blendMode = state.blendMode
+        )
     }
 
     private fun triggerFusion(
         project: OrbitProject,
-        abstraction: Float,
-        blendMode: OrbitBlendMode,
+        artStyle: OrbitArtStyle,
+        params: OrbitStyleParameters,
         refIndex: Int,
         offsetX: Float,
-        offsetY: Float
+        offsetY: Float,
+        shifts: Map<Int, Pair<Float, Float>>,
+        blendMode: OrbitBlendMode
     ) {
         if (project.imagePaths.isEmpty()) return
 
@@ -155,9 +326,10 @@ class StudioViewModel(
                 renderProgress = FusionProgress(0, project.actualCount, "Vorbereitung...")
             )
 
-            // Save parameter adjustments to project
             val updatedProject = project.copy(
-                abstractionLevel = abstraction,
+                artStyle = artStyle,
+                styleParams = params,
+                abstractionLevel = params.abstraction,
                 blendMode = blendMode,
                 referenceImageIndex = refIndex,
                 offsetX = offsetX,
@@ -168,9 +340,11 @@ class StudioViewModel(
             val result = OrbitFusionEngine.renderFusion(
                 imagePaths = project.imagePaths,
                 referenceIndex = refIndex,
-                abstractionLevel = abstraction,
-                offsetX = offsetX,
-                offsetY = offsetY,
+                artStyle = artStyle,
+                styleParams = params,
+                individualShifts = shifts,
+                globalOffsetX = offsetX,
+                globalOffsetY = offsetY,
                 blendMode = blendMode,
                 targetWidth = 1080,
                 targetHeight = 1080,
@@ -180,7 +354,6 @@ class StudioViewModel(
             )
 
             if (result != null) {
-                // Save preview file locally for quick caching
                 val previewFile = File(getApplication<Application>().cacheDir, "preview_${project.id}.jpg")
                 BitmapUtils.saveBitmapToFile(result, previewFile, quality = 90)
                 repository.updateProject(updatedProject.copy(lastRenderedPath = previewFile.absolutePath))
@@ -204,7 +377,7 @@ class StudioViewModel(
             val uri = BitmapUtils.exportToMediaStore(
                 context = getApplication(),
                 bitmap = bitmap,
-                title = "ORBIT_${project.name.replace(" ", "_")}",
+                title = "ORBIT_${project.name.replace(" ", "_")}_${_uiState.value.selectedArtStyle.name}",
                 quality = quality
             )
 

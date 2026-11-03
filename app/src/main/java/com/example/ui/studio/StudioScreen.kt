@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -34,15 +35,22 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.CenterFocusStrong
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Compare
-import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.LocationCity
+import androidx.compose.material.icons.filled.MotionPhotosOn
+import androidx.compose.material.icons.filled.Nightlight
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -52,7 +60,6 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
@@ -60,7 +67,6 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -74,6 +80,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -84,6 +91,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.example.model.OrbitArtStyle
 import com.example.model.OrbitBlendMode
 import com.example.model.OrbitProject
 import com.example.ui.theme.AmberAccent
@@ -109,7 +117,7 @@ fun StudioScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val scrollState = rememberScrollState()
 
-    var showOffsetControls by remember { mutableStateOf(false) }
+    var showAdvancedParams by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         viewModel.effects.collect { effect ->
@@ -166,7 +174,7 @@ fun StudioScreen(
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text = "${active.actualCount} Aufnahmen • Modus ${active.mode.title}",
+                        text = "${active.actualCount} Aufnahmen • Stil: ${uiState.selectedArtStyle.title}",
                         style = MaterialTheme.typography.bodySmall,
                         color = CyanAccent
                     )
@@ -258,7 +266,7 @@ fun StudioScreen(
                             )
                             Spacer(modifier = Modifier.height(14.dp))
                             Text(
-                                text = progress?.stage ?: "Berechne Bildfusion...",
+                                text = progress?.stage ?: "Berechne Stil-Fusion...",
                                 color = SlateWhite,
                                 style = MaterialTheme.typography.bodyMedium,
                                 textAlign = TextAlign.Center
@@ -315,7 +323,50 @@ fun StudioScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Control Section Card
+            // 1. HORIZONTAL ART STYLE PRESET SELECTOR (Directly under image preview)
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Künstlerischer Bildstil",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        color = SlateWhite
+                    )
+                    Text(
+                        text = uiState.selectedArtStyle.subtitle,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = CyanAccent
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("styles_horizontal_picker")
+                ) {
+                    items(OrbitArtStyle.values()) { style ->
+                        val isSelected = uiState.selectedArtStyle == style
+                        ArtStyleCard(
+                            style = style,
+                            isSelected = isSelected,
+                            onClick = { viewModel.setArtStyle(style) }
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // 2. GLOBAL CONTROLS CARD (Abstraktion & Motivstabilität)
             Card(
                 colors = CardDefaults.cardColors(containerColor = SlateDark900),
                 shape = RoundedCornerShape(16.dp),
@@ -324,7 +375,7 @@ fun StudioScreen(
                     .padding(horizontal = 16.dp)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    // Central Abstraction Slider (0–100)
+                    // Global Slider 1: Abstraktion
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -336,18 +387,16 @@ fun StudioScreen(
                             color = SlateWhite
                         )
                         Text(
-                            text = "${uiState.abstractionLevel.roundToInt()}%",
+                            text = "${uiState.styleParameters.abstraction.roundToInt()}%",
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                             color = CyanAccent
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(4.dp))
-
                     val abstractionDesc = when {
-                        uiState.abstractionLevel < 25f -> "Fokus Referenzmotiv • Subtile Bewegungskonturen"
-                        uiState.abstractionLevel < 70f -> "Ausgewogene Synthese • Dynamische Raumtiefe"
-                        else -> "Vollständige Kinetische Dispersion • Kubistisches Feld"
+                        uiState.styleParameters.abstraction < 30f -> "Motiv dominant • Dezente Perspektivkonturen"
+                        uiState.styleParameters.abstraction < 70f -> "Künstlerische Synthese • Harmonische Raumtiefe"
+                        else -> "Volle Abstraktion • Kinetische Dispersion"
                     }
 
                     Text(
@@ -356,13 +405,12 @@ fun StudioScreen(
                         color = SlateLight100.copy(alpha = 0.7f)
                     )
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
 
                     Slider(
-                        value = uiState.abstractionLevel,
-                        onValueChange = { viewModel.setAbstractionLevel(it) },
+                        value = uiState.styleParameters.abstraction,
+                        onValueChange = { viewModel.setAbstraction(it) },
                         valueRange = 0f..100f,
-                        steps = 19,
                         colors = SliderDefaults.colors(
                             thumbColor = CyanNeon,
                             activeTrackColor = CyanAccent,
@@ -373,39 +421,53 @@ fun StudioScreen(
                             .testTag("slider_abstraction")
                     )
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(14.dp))
 
-                    // Blend Mode Selector
-                    Text(
-                        text = "Fusions-Modus",
-                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                        color = SlateWhite
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
+                    // Global Slider 2: Motivstabilität
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        OrbitBlendMode.values().forEach { mode ->
-                            val selected = uiState.blendMode == mode
-                            FilterChip(
-                                selected = selected,
-                                onClick = { viewModel.setBlendMode(mode) },
-                                label = { Text(mode.title, fontSize = 11.sp) },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = CyanAccent,
-                                    selectedLabelColor = SlateDark950,
-                                    containerColor = SlateDark800,
-                                    labelColor = SlateLight100
-                                ),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("chip_blend_${mode.name.lowercase()}")
-                            )
-                        }
+                        Text(
+                            text = "Motivstabilität",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = SlateWhite
+                        )
+                        Text(
+                            text = "${uiState.styleParameters.subjectStability.roundToInt()}%",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = CyanNeon
+                        )
                     }
+
+                    val stabilityDesc = when {
+                        uiState.styleParameters.subjectStability < 40f -> "Freie Perspektiven-Dispersion"
+                        uiState.styleParameters.subjectStability < 75f -> "Balancierte Hauptmotiv-Verankerung"
+                        else -> "Dominanter Motivfokus • Feste Zentrierung"
+                    }
+
+                    Text(
+                        text = stabilityDesc,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = SlateLight100.copy(alpha = 0.7f)
+                    )
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Slider(
+                        value = uiState.styleParameters.subjectStability,
+                        onValueChange = { viewModel.setSubjectStability(it) },
+                        valueRange = 0f..100f,
+                        colors = SliderDefaults.colors(
+                            thumbColor = CyanNeon,
+                            activeTrackColor = CyanAccent,
+                            inactiveTrackColor = SlateDark700
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("slider_subject_stability")
+                    )
 
                     Spacer(modifier = Modifier.height(14.dp))
 
@@ -438,7 +500,7 @@ fun StudioScreen(
                             val isSelected = index == uiState.selectedRefIndex
                             Box(
                                 modifier = Modifier
-                                    .size(58.dp)
+                                    .size(56.dp)
                                     .clip(RoundedCornerShape(8.dp))
                                     .border(
                                         width = if (isSelected) 2.5.dp else 1.dp,
@@ -478,42 +540,135 @@ fun StudioScreen(
 
                     Spacer(modifier = Modifier.height(14.dp))
 
-                    // 2D Fine Alignment Toggle
+                    // Expandable Advanced Parameters Toggle
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { showOffsetControls = !showOffsetControls }
-                            .padding(vertical = 4.dp),
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(SlateDark800)
+                            .clickable { showAdvancedParams = !showAdvancedParams }
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Tune,
-                                contentDescription = "Ausrichtung",
+                                contentDescription = "Erweiterte Einstellungen",
                                 tint = CyanAccent,
                                 modifier = Modifier.size(18.dp)
                             )
                             Text(
-                                text = "2D Bildausrichtung / Feinkorrektur",
-                                style = MaterialTheme.typography.bodyMedium,
+                                text = "Erweiterte Stil- & Ausrichtungsparameter",
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
                                 color = SlateLight100
                             )
                         }
-                        Text(
-                            text = if (showOffsetControls) "Schließen" else "Anpassen",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = CyanAccent
+                        Icon(
+                            imageVector = if (showAdvancedParams) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                            contentDescription = "Aufklappen",
+                            tint = CyanAccent
                         )
                     }
 
-                    if (showOffsetControls) {
-                        Spacer(modifier = Modifier.height(8.dp))
+                    // Advanced Parameters Body
+                    if (showAdvancedParams) {
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // Überlagerungsstärke
+                        ParameterSlider(
+                            label = "Überlagerungsstärke (Blend)",
+                            value = uiState.styleParameters.blendStrength,
+                            onValueChange = { viewModel.updateStyleParameters(uiState.styleParameters.copy(blendStrength = it)) }
+                        )
+
+                        // Kantenbetonung
+                        ParameterSlider(
+                            label = "Kantenbetonung (Kontur/Linien)",
+                            value = uiState.styleParameters.edgeEmphasis,
+                            onValueChange = { viewModel.updateStyleParameters(uiState.styleParameters.copy(edgeEmphasis = it)) }
+                        )
+
+                        // Farbverdichtung
+                        ParameterSlider(
+                            label = "Farbverdichtung (Sättigung/Dichte)",
+                            value = uiState.styleParameters.colorDensity,
+                            onValueChange = { viewModel.updateStyleParameters(uiState.styleParameters.copy(colorDensity = it)) }
+                        )
+
+                        // Weichheit & Schleier
+                        ParameterSlider(
+                            label = "Malerische Weichheit",
+                            value = uiState.styleParameters.softness,
+                            onValueChange = { viewModel.updateStyleParameters(uiState.styleParameters.copy(softness = it)) }
+                        )
+
+                        // Bewegungsdynamik
+                        ParameterSlider(
+                            label = "Bewegungsdynamik (Trails)",
+                            value = uiState.styleParameters.motionStrength,
+                            onValueChange = { viewModel.updateStyleParameters(uiState.styleParameters.copy(motionStrength = it)) }
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // 2D Bildregistrierung & Ausrichtung
                         Text(
-                            text = "Horizontale Verschiebung: ${(uiState.offsetX * 10).roundToInt() / 10f} px",
+                            text = "2D Bildregistrierung & Translation",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                            color = SlateWhite
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = { viewModel.runAutoAlignment() },
+                                enabled = !uiState.isAutoAligning && !uiState.isRendering,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (uiState.autoAlignApplied) CyanNeon else CyanAccent,
+                                    contentColor = SlateDark950
+                                ),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("btn_auto_align")
+                            ) {
+                                if (uiState.isAutoAligning) {
+                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), color = SlateDark950)
+                                } else {
+                                    Icon(Icons.Default.CenterFocusStrong, contentDescription = null, modifier = Modifier.size(16.dp))
+                                }
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = if (uiState.autoAlignApplied) "Ausrichtung aktiv" else "Grobe 2D-Ausrichtung",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+
+                            OutlinedButton(
+                                onClick = { viewModel.resetAlignment() },
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = SlateLight100),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.testTag("btn_reset_align")
+                            ) {
+                                Icon(Icons.Default.RestartAlt, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Reset", fontSize = 11.sp)
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Manual Fine Shift
+                        Text(
+                            text = "Manuelle Verschiebung X: ${(uiState.offsetX * 10).roundToInt() / 10f} px",
                             style = MaterialTheme.typography.labelSmall,
                             color = SlateLight100.copy(alpha = 0.8f)
                         )
@@ -526,7 +681,7 @@ fun StudioScreen(
                         )
 
                         Text(
-                            text = "Vertikale Verschiebung: ${(uiState.offsetY * 10).roundToInt() / 10f} px",
+                            text = "Manuelle Verschiebung Y: ${(uiState.offsetY * 10).roundToInt() / 10f} px",
                             style = MaterialTheme.typography.labelSmall,
                             color = SlateLight100.copy(alpha = 0.8f)
                         )
@@ -605,6 +760,119 @@ fun StudioScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+fun ArtStyleCard(
+    style: OrbitArtStyle,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    val icon: ImageVector = when (style) {
+        OrbitArtStyle.IMPRESSIONIST -> Icons.Default.Brush
+        OrbitArtStyle.IN_THE_ROUND -> Icons.Default.Sync
+        OrbitArtStyle.ARCHITECTURAL -> Icons.Default.CenterFocusStrong
+        OrbitArtStyle.ETHEREAL -> Icons.Default.Nightlight
+        OrbitArtStyle.MOTION_FLOW -> Icons.Default.MotionPhotosOn
+        OrbitArtStyle.URBAN_LAYERS -> Icons.Default.LocationCity
+    }
+
+    Box(
+        modifier = Modifier
+            .width(145.dp)
+            .height(96.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (isSelected) SlateDark800 else SlateDark900)
+            .border(
+                width = if (isSelected) 2.dp else 1.dp,
+                color = if (isSelected) CyanNeon else SlateDark700,
+                shape = RoundedCornerShape(12.dp)
+            )
+            .clickable { onClick() }
+            .padding(10.dp)
+            .testTag("style_card_${style.name.lowercase()}"),
+        contentAlignment = Alignment.TopStart
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = style.title,
+                    tint = if (isSelected) CyanNeon else SlateLight100.copy(alpha = 0.7f),
+                    modifier = Modifier.size(20.dp)
+                )
+
+                if (isSelected) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .background(CyanNeon, CircleShape)
+                    )
+                }
+            }
+
+            Column {
+                Text(
+                    text = style.title,
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                    color = if (isSelected) SlateWhite else SlateLight100,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = style.subtitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (isSelected) CyanAccent else SlateLight100.copy(alpha = 0.55f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun ParameterSlider(
+    label: String,
+    value: Float,
+    onValueChange: (Float) -> Unit
+) {
+    Column(modifier = Modifier.padding(vertical = 4.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = SlateLight100.copy(alpha = 0.85f)
+            )
+            Text(
+                text = "${value.roundToInt()}%",
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                color = CyanAccent
+            )
+        }
+        Slider(
+            value = value,
+            onValueChange = onValueChange,
+            valueRange = 0f..100f,
+            colors = SliderDefaults.colors(
+                thumbColor = CyanAccent,
+                activeTrackColor = CyanAccent,
+                inactiveTrackColor = SlateDark700
+            ),
+            modifier = Modifier.fillMaxWidth()
+        )
     }
 }
 

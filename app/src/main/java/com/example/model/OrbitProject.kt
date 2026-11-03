@@ -58,6 +58,8 @@ data class OrbitProject(
     val offsetX: Float = 0f,
     val offsetY: Float = 0f,
     val blendMode: OrbitBlendMode = OrbitBlendMode.WEIGHTED_AVERAGE,
+    val artStyle: OrbitArtStyle = OrbitArtStyle.IMPRESSIONIST,
+    val styleParams: OrbitStyleParameters = OrbitArtStyle.IMPRESSIONIST.defaultParameters,
     val lastRenderedPath: String? = null
 ) {
     val actualCount: Int

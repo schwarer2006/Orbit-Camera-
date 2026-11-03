@@ -8,9 +8,11 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.net.Uri
 import com.example.engine.BitmapUtils
+import com.example.model.OrbitArtStyle
 import com.example.model.OrbitBlendMode
 import com.example.model.OrbitCaptureMode
 import com.example.model.OrbitProject
+import com.example.model.OrbitStyleParameters
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -62,6 +64,29 @@ class OrbitProjectRepository(private val context: Context) {
                     paths.add(imagePathsJson.getString(j))
                 }
 
+                val artStyle = try {
+                    OrbitArtStyle.valueOf(obj.optString("artStyle", OrbitArtStyle.IMPRESSIONIST.name))
+                } catch (e: Exception) {
+                    OrbitArtStyle.IMPRESSIONIST
+                }
+
+                val paramsObj = obj.optJSONObject("styleParams")
+                val styleParams = if (paramsObj != null) {
+                    OrbitStyleParameters(
+                        abstraction = paramsObj.optDouble("abstraction", obj.optDouble("abstractionLevel", 50.0)).toFloat(),
+                        subjectStability = paramsObj.optDouble("subjectStability", 70.0).toFloat(),
+                        blendStrength = paramsObj.optDouble("blendStrength", 70.0).toFloat(),
+                        edgeEmphasis = paramsObj.optDouble("edgeEmphasis", 40.0).toFloat(),
+                        colorDensity = paramsObj.optDouble("colorDensity", 50.0).toFloat(),
+                        softness = paramsObj.optDouble("softness", 30.0).toFloat(),
+                        motionStrength = paramsObj.optDouble("motionStrength", 30.0).toFloat()
+                    )
+                } else {
+                    artStyle.defaultParameters.copy(
+                        abstraction = obj.optDouble("abstractionLevel", 50.0).toFloat()
+                    )
+                }
+
                 val project = OrbitProject(
                     id = obj.getString("id"),
                     name = obj.getString("name"),
@@ -74,7 +99,7 @@ class OrbitProjectRepository(private val context: Context) {
                     targetCount = obj.optInt("targetCount", 50),
                     imagePaths = paths,
                     referenceImageIndex = obj.optInt("referenceImageIndex", 0),
-                    abstractionLevel = obj.optDouble("abstractionLevel", 50.0).toFloat(),
+                    abstractionLevel = styleParams.abstraction,
                     offsetX = obj.optDouble("offsetX", 0.0).toFloat(),
                     offsetY = obj.optDouble("offsetY", 0.0).toFloat(),
                     blendMode = try {
@@ -82,6 +107,8 @@ class OrbitProjectRepository(private val context: Context) {
                     } catch (e: Exception) {
                         OrbitBlendMode.WEIGHTED_AVERAGE
                     },
+                    artStyle = artStyle,
+                    styleParams = styleParams,
                     lastRenderedPath = obj.optString("lastRenderedPath", null).takeIf { it != "null" && it?.isNotBlank() == true }
                 )
                 list.add(project)
@@ -106,10 +133,23 @@ class OrbitProjectRepository(private val context: Context) {
                     p.imagePaths.forEach { pathsArr.put(it) }
                     put("imagePaths", pathsArr)
                     put("referenceImageIndex", p.referenceImageIndex)
-                    put("abstractionLevel", p.abstractionLevel.toDouble())
+                    put("abstractionLevel", p.styleParams.abstraction.toDouble())
                     put("offsetX", p.offsetX.toDouble())
                     put("offsetY", p.offsetY.toDouble())
                     put("blendMode", p.blendMode.name)
+                    put("artStyle", p.artStyle.name)
+
+                    val paramsObj = JSONObject().apply {
+                        put("abstraction", p.styleParams.abstraction.toDouble())
+                        put("subjectStability", p.styleParams.subjectStability.toDouble())
+                        put("blendStrength", p.styleParams.blendStrength.toDouble())
+                        put("edgeEmphasis", p.styleParams.edgeEmphasis.toDouble())
+                        put("colorDensity", p.styleParams.colorDensity.toDouble())
+                        put("softness", p.styleParams.softness.toDouble())
+                        put("motionStrength", p.styleParams.motionStrength.toDouble())
+                    }
+                    put("styleParams", paramsObj)
+
                     put("lastRenderedPath", p.lastRenderedPath ?: JSONObject.NULL)
                 }
                 array.put(obj)
