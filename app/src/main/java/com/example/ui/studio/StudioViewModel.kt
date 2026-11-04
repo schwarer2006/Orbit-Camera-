@@ -179,6 +179,54 @@ class StudioViewModel(
         )
     }
 
+    fun setColorIntensity(value: Float) {
+        val updatedParams = _uiState.value.styleParameters.copy(colorIntensity = value)
+        _uiState.value = _uiState.value.copy(styleParameters = updatedParams)
+        val project = _uiState.value.activeProject ?: return
+        triggerFusion(
+            project = project,
+            artStyle = _uiState.value.selectedArtStyle,
+            params = updatedParams,
+            refIndex = _uiState.value.selectedRefIndex,
+            offsetX = _uiState.value.offsetX,
+            offsetY = _uiState.value.offsetY,
+            shifts = _uiState.value.individualShifts,
+            blendMode = _uiState.value.blendMode
+        )
+    }
+
+    fun setEdgeEmphasis(value: Float) {
+        val updatedParams = _uiState.value.styleParameters.copy(edgeEmphasis = value)
+        _uiState.value = _uiState.value.copy(styleParameters = updatedParams)
+        val project = _uiState.value.activeProject ?: return
+        triggerFusion(
+            project = project,
+            artStyle = _uiState.value.selectedArtStyle,
+            params = updatedParams,
+            refIndex = _uiState.value.selectedRefIndex,
+            offsetX = _uiState.value.offsetX,
+            offsetY = _uiState.value.offsetY,
+            shifts = _uiState.value.individualShifts,
+            blendMode = _uiState.value.blendMode
+        )
+    }
+
+    fun setBackgroundDissolve(value: Float) {
+        val updatedParams = _uiState.value.styleParameters.copy(backgroundDissolve = value)
+        _uiState.value = _uiState.value.copy(styleParameters = updatedParams)
+        val project = _uiState.value.activeProject ?: return
+        triggerFusion(
+            project = project,
+            artStyle = _uiState.value.selectedArtStyle,
+            params = updatedParams,
+            refIndex = _uiState.value.selectedRefIndex,
+            offsetX = _uiState.value.offsetX,
+            offsetY = _uiState.value.offsetY,
+            shifts = _uiState.value.individualShifts,
+            blendMode = _uiState.value.blendMode
+        )
+    }
+
     fun updateStyleParameters(params: OrbitStyleParameters) {
         _uiState.value = _uiState.value.copy(styleParameters = params)
         val project = _uiState.value.activeProject ?: return

@@ -56,8 +56,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -174,7 +172,7 @@ fun StudioScreen(
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text = "${active.actualCount} Aufnahmen • Stil: ${uiState.selectedArtStyle.title}",
+                        text = "${active.actualCount} Aufnahmen • ${uiState.selectedArtStyle.title} • ORBIT V0.3",
                         style = MaterialTheme.typography.bodySmall,
                         color = CyanAccent
                     )
@@ -321,9 +319,9 @@ fun StudioScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
-            // 1. HORIZONTAL ART STYLE PRESET SELECTOR (Directly under image preview)
+            // 1. HORIZONTAL ART STYLE PRESET SELECTOR (Directly under preview)
             Column(modifier = Modifier.fillMaxWidth()) {
                 Row(
                     modifier = Modifier
@@ -364,9 +362,9 @@ fun StudioScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
-            // 2. GLOBAL CONTROLS CARD (Abstraktion & Motivstabilität)
+            // 2. DIE 5 SICHTBAREN HAUPT-REGLER
             Card(
                 colors = CardDefaults.cardColors(containerColor = SlateDark900),
                 shape = RoundedCornerShape(16.dp),
@@ -375,101 +373,79 @@ fun StudioScreen(
                     .padding(horizontal = 16.dp)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    // Global Slider 1: Abstraktion
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Abstraktion",
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                            color = SlateWhite
-                        )
-                        Text(
-                            text = "${uiState.styleParameters.abstraction.roundToInt()}%",
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                            color = CyanAccent
-                        )
-                    }
-
-                    val abstractionDesc = when {
-                        uiState.styleParameters.abstraction < 30f -> "Motiv dominant • Dezente Perspektivkonturen"
-                        uiState.styleParameters.abstraction < 70f -> "Künstlerische Synthese • Harmonische Raumtiefe"
-                        else -> "Volle Abstraktion • Kinetische Dispersion"
-                    }
-
                     Text(
-                        text = abstractionDesc,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = SlateLight100.copy(alpha = 0.7f)
+                        text = "ORBIT Hauptregler",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        color = SlateWhite
                     )
+                    Spacer(modifier = Modifier.height(4.dp))
 
-                    Spacer(modifier = Modifier.height(6.dp))
-
-                    Slider(
+                    // 1. Abstraktion
+                    PrimaryControlSlider(
+                        label = "1. Abstraktion",
                         value = uiState.styleParameters.abstraction,
                         onValueChange = { viewModel.setAbstraction(it) },
-                        valueRange = 0f..100f,
-                        colors = SliderDefaults.colors(
-                            thumbColor = CyanNeon,
-                            activeTrackColor = CyanAccent,
-                            inactiveTrackColor = SlateDark700
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("slider_abstraction")
+                        description = when {
+                            uiState.styleParameters.abstraction < 30f -> "Motiv dominant • Dezente Perspektivkonturen"
+                            uiState.styleParameters.abstraction < 70f -> "Künstlerische Synthese • Harmonische Raumtiefe"
+                            else -> "Volle Abstraktion • Kinetische Dispersion"
+                        },
+                        tag = "slider_abstraction"
                     )
 
-                    Spacer(modifier = Modifier.height(14.dp))
-
-                    // Global Slider 2: Motivstabilität
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Motivstabilität",
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                            color = SlateWhite
-                        )
-                        Text(
-                            text = "${uiState.styleParameters.subjectStability.roundToInt()}%",
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                            color = CyanNeon
-                        )
-                    }
-
-                    val stabilityDesc = when {
-                        uiState.styleParameters.subjectStability < 40f -> "Freie Perspektiven-Dispersion"
-                        uiState.styleParameters.subjectStability < 75f -> "Balancierte Hauptmotiv-Verankerung"
-                        else -> "Dominanter Motivfokus • Feste Zentrierung"
-                    }
-
-                    Text(
-                        text = stabilityDesc,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = SlateLight100.copy(alpha = 0.7f)
-                    )
-
-                    Spacer(modifier = Modifier.height(6.dp))
-
-                    Slider(
+                    // 2. Motivstabilität
+                    PrimaryControlSlider(
+                        label = "2. Motivstabilität",
                         value = uiState.styleParameters.subjectStability,
                         onValueChange = { viewModel.setSubjectStability(it) },
-                        valueRange = 0f..100f,
-                        colors = SliderDefaults.colors(
-                            thumbColor = CyanNeon,
-                            activeTrackColor = CyanAccent,
-                            inactiveTrackColor = SlateDark700
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("slider_subject_stability")
+                        description = when {
+                            uiState.styleParameters.subjectStability < 40f -> "Freie Perspektiven-Dispersion"
+                            uiState.styleParameters.subjectStability < 75f -> "Balancierte Hauptmotiv-Verankerung"
+                            else -> "Dominanter Motivfokus • Feste Zentrierung"
+                        },
+                        tag = "slider_subject_stability"
                     )
 
-                    Spacer(modifier = Modifier.height(14.dp))
+                    // 3. Farbintensität
+                    PrimaryControlSlider(
+                        label = "3. Farbintensität & Leuchtkraft",
+                        value = uiState.styleParameters.colorIntensity,
+                        onValueChange = { viewModel.setColorIntensity(it) },
+                        description = when {
+                            uiState.styleParameters.colorIntensity < 40f -> "Natürlich gedämpfte Tonalität"
+                            uiState.styleParameters.colorIntensity < 75f -> "Lebendige, satte Bildfarben"
+                            else -> "Expressive Leuchtkraft • Maximal leuchtend"
+                        },
+                        tag = "slider_color_intensity"
+                    )
+
+                    // 4. Konturprägung
+                    PrimaryControlSlider(
+                        label = "4. Konturprägung",
+                        value = uiState.styleParameters.edgeEmphasis,
+                        onValueChange = { viewModel.setEdgeEmphasis(it) },
+                        description = when {
+                            uiState.styleParameters.edgeEmphasis < 35f -> "Weiche, malerische Übergänge"
+                            uiState.styleParameters.edgeEmphasis < 70f -> "Prägnante Konturen & Linien"
+                            else -> "Gestaffelte, grafische Kantenbetonung"
+                        },
+                        tag = "slider_edge_emphasis"
+                    )
+
+                    // 5. Hintergrundauflösung
+                    PrimaryControlSlider(
+                        label = "5. Hintergrundauflösung",
+                        value = uiState.styleParameters.backgroundDissolve,
+                        onValueChange = { viewModel.setBackgroundDissolve(it) },
+                        description = when {
+                            uiState.styleParameters.backgroundDissolve < 35f -> "Hintergrunddetails erkennbar"
+                            uiState.styleParameters.backgroundDissolve < 70f -> "Harmonisch aufgelöster Dunst"
+                            else -> "Malerischer Hintergrundschleier • Motiv freigestellt"
+                        },
+                        tag = "slider_background_dissolve"
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
 
                     // Reference Image Carousel
                     Row(
@@ -540,14 +516,14 @@ fun StudioScreen(
 
                     Spacer(modifier = Modifier.height(14.dp))
 
-                    // Expandable Advanced Parameters Toggle
+                    // 3. ERWEITERTE KREATIVE EINSTELLUNGEN (Expandable)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
+                            .clip(RoundedCornerShape(10.dp))
                             .background(SlateDark800)
                             .clickable { showAdvancedParams = !showAdvancedParams }
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                            .padding(horizontal = 12.dp, vertical = 11.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -559,11 +535,11 @@ fun StudioScreen(
                                 imageVector = Icons.Default.Tune,
                                 contentDescription = "Erweiterte Einstellungen",
                                 tint = CyanAccent,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(20.dp)
                             )
                             Text(
-                                text = "Erweiterte Stil- & Ausrichtungsparameter",
-                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                                text = "Erweiterte kreative Parameter",
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
                                 color = SlateLight100
                             )
                         }
@@ -574,43 +550,104 @@ fun StudioScreen(
                         )
                     }
 
-                    // Advanced Parameters Body
+                    // Advanced Parameters Content
                     if (showAdvancedParams) {
                         Spacer(modifier = Modifier.height(14.dp))
 
-                        // Überlagerungsstärke
-                        ParameterSlider(
-                            label = "Überlagerungsstärke (Blend)",
-                            value = uiState.styleParameters.blendStrength,
-                            onValueChange = { viewModel.updateStyleParameters(uiState.styleParameters.copy(blendStrength = it)) }
+                        // In the Round / Ventosa Mehrfachkonturen & Echos
+                        Text(
+                            text = "Perspektiv-Staffelung & Echoformen",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                            color = CyanNeon
                         )
 
-                        // Kantenbetonung
                         ParameterSlider(
-                            label = "Kantenbetonung (Kontur/Linien)",
-                            value = uiState.styleParameters.edgeEmphasis,
-                            onValueChange = { viewModel.updateStyleParameters(uiState.styleParameters.copy(edgeEmphasis = it)) }
+                            label = "Echo-Konturenstärke (Pepa Ventosa Signature)",
+                            value = uiState.styleParameters.echoStrength,
+                            onValueChange = { viewModel.updateStyleParameters(uiState.styleParameters.copy(echoStrength = it)) }
                         )
 
-                        // Farbverdichtung
                         ParameterSlider(
-                            label = "Farbverdichtung (Sättigung/Dichte)",
+                            label = "Anzahl sichtbarer Perspektiv-Echos (${uiState.styleParameters.echoCount.roundToInt()})",
+                            value = (uiState.styleParameters.echoCount - 3f) / 9f * 100f,
+                            onValueChange = {
+                                val count = 3f + (it / 100f) * 9f
+                                viewModel.updateStyleParameters(uiState.styleParameters.copy(echoCount = count))
+                            }
+                        )
+
+                        ParameterSlider(
+                            label = "Räumlicher Perspektiv-Versatz (Spread)",
+                            value = uiState.styleParameters.perspectiveSpread,
+                            onValueChange = { viewModel.updateStyleParameters(uiState.styleParameters.copy(perspectiveSpread = it)) }
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Farbstimmung & Tonalität",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                            color = CyanNeon
+                        )
+
+                        ParameterSlider(
+                            label = "Warme Farbstimmung (Goldener Tonwert)",
+                            value = uiState.styleParameters.warmth,
+                            onValueChange = { viewModel.updateStyleParameters(uiState.styleParameters.copy(warmth = it)) }
+                        )
+
+                        ParameterSlider(
+                            label = "Farbdichte & Sättigungsfülle",
                             value = uiState.styleParameters.colorDensity,
                             onValueChange = { viewModel.updateStyleParameters(uiState.styleParameters.copy(colorDensity = it)) }
                         )
 
-                        // Weichheit & Schleier
+                        ParameterSlider(
+                            label = "Schattentiefe & Mikrokontrast",
+                            value = uiState.styleParameters.shadowDepth,
+                            onValueChange = { viewModel.updateStyleParameters(uiState.styleParameters.copy(shadowDepth = it)) }
+                        )
+
+                        ParameterSlider(
+                            label = "Glanz & Leuchtschleier (Glow)",
+                            value = uiState.styleParameters.lightGlow,
+                            onValueChange = { viewModel.updateStyleParameters(uiState.styleParameters.copy(lightGlow = it)) }
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Textur & Dynamik",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                            color = CyanNeon
+                        )
+
                         ParameterSlider(
                             label = "Malerische Weichheit",
                             value = uiState.styleParameters.softness,
                             onValueChange = { viewModel.updateStyleParameters(uiState.styleParameters.copy(softness = it)) }
                         )
 
-                        // Bewegungsdynamik
                         ParameterSlider(
                             label = "Bewegungsdynamik (Trails)",
                             value = uiState.styleParameters.motionStrength,
                             onValueChange = { viewModel.updateStyleParameters(uiState.styleParameters.copy(motionStrength = it)) }
+                        )
+
+                        ParameterSlider(
+                            label = "Detail- & Texturdichte",
+                            value = uiState.styleParameters.detailDensity,
+                            onValueChange = { viewModel.updateStyleParameters(uiState.styleParameters.copy(detailDensity = it)) }
+                        )
+
+                        ParameterSlider(
+                            label = "Atmosphärische Schleierwirkung",
+                            value = uiState.styleParameters.atmosphere,
+                            onValueChange = { viewModel.updateStyleParameters(uiState.styleParameters.copy(atmosphere = it)) }
+                        )
+
+                        ParameterSlider(
+                            label = "Technische Fusionsstärke (Blend)",
+                            value = uiState.styleParameters.blendStrength,
+                            onValueChange = { viewModel.updateStyleParameters(uiState.styleParameters.copy(blendStrength = it)) }
                         )
 
                         Spacer(modifier = Modifier.height(10.dp))
@@ -764,6 +801,56 @@ fun StudioScreen(
 }
 
 @Composable
+fun PrimaryControlSlider(
+    label: String,
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    description: String,
+    tag: String
+) {
+    Column(modifier = Modifier.padding(vertical = 5.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                color = SlateWhite
+            )
+            Text(
+                text = "${value.roundToInt()}%",
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                color = CyanAccent
+            )
+        }
+
+        Text(
+            text = description,
+            style = MaterialTheme.typography.labelSmall,
+            color = SlateLight100.copy(alpha = 0.65f)
+        )
+
+        Spacer(modifier = Modifier.height(2.dp))
+
+        Slider(
+            value = value,
+            onValueChange = onValueChange,
+            valueRange = 0f..100f,
+            colors = SliderDefaults.colors(
+                thumbColor = CyanNeon,
+                activeTrackColor = CyanAccent,
+                inactiveTrackColor = SlateDark700
+            ),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag(tag)
+        )
+    }
+}
+
+@Composable
 fun ArtStyleCard(
     style: OrbitArtStyle,
     isSelected: Boolean,
@@ -780,7 +867,7 @@ fun ArtStyleCard(
 
     Box(
         modifier = Modifier
-            .width(145.dp)
+            .width(148.dp)
             .height(96.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(if (isSelected) SlateDark800 else SlateDark900)

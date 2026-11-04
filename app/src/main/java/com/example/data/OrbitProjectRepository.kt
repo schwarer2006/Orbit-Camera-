@@ -71,19 +71,30 @@ class OrbitProjectRepository(private val context: Context) {
                 }
 
                 val paramsObj = obj.optJSONObject("styleParams")
+                val def = artStyle.defaultParameters
                 val styleParams = if (paramsObj != null) {
                     OrbitStyleParameters(
-                        abstraction = paramsObj.optDouble("abstraction", obj.optDouble("abstractionLevel", 50.0)).toFloat(),
-                        subjectStability = paramsObj.optDouble("subjectStability", 70.0).toFloat(),
-                        blendStrength = paramsObj.optDouble("blendStrength", 70.0).toFloat(),
-                        edgeEmphasis = paramsObj.optDouble("edgeEmphasis", 40.0).toFloat(),
-                        colorDensity = paramsObj.optDouble("colorDensity", 50.0).toFloat(),
-                        softness = paramsObj.optDouble("softness", 30.0).toFloat(),
-                        motionStrength = paramsObj.optDouble("motionStrength", 30.0).toFloat()
+                        abstraction = paramsObj.optDouble("abstraction", obj.optDouble("abstractionLevel", def.abstraction.toDouble())).toFloat(),
+                        subjectStability = paramsObj.optDouble("subjectStability", def.subjectStability.toDouble()).toFloat(),
+                        colorIntensity = paramsObj.optDouble("colorIntensity", def.colorIntensity.toDouble()).toFloat(),
+                        edgeEmphasis = paramsObj.optDouble("edgeEmphasis", def.edgeEmphasis.toDouble()).toFloat(),
+                        backgroundDissolve = paramsObj.optDouble("backgroundDissolve", def.backgroundDissolve.toDouble()).toFloat(),
+                        echoStrength = paramsObj.optDouble("echoStrength", def.echoStrength.toDouble()).toFloat(),
+                        echoCount = paramsObj.optDouble("echoCount", def.echoCount.toDouble()).toFloat(),
+                        perspectiveSpread = paramsObj.optDouble("perspectiveSpread", def.perspectiveSpread.toDouble()).toFloat(),
+                        colorDensity = paramsObj.optDouble("colorDensity", def.colorDensity.toDouble()).toFloat(),
+                        warmth = paramsObj.optDouble("warmth", def.warmth.toDouble()).toFloat(),
+                        lightGlow = paramsObj.optDouble("lightGlow", def.lightGlow.toDouble()).toFloat(),
+                        shadowDepth = paramsObj.optDouble("shadowDepth", def.shadowDepth.toDouble()).toFloat(),
+                        softness = paramsObj.optDouble("softness", def.softness.toDouble()).toFloat(),
+                        motionStrength = paramsObj.optDouble("motionStrength", def.motionStrength.toDouble()).toFloat(),
+                        detailDensity = paramsObj.optDouble("detailDensity", def.detailDensity.toDouble()).toFloat(),
+                        atmosphere = paramsObj.optDouble("atmosphere", def.atmosphere.toDouble()).toFloat(),
+                        blendStrength = paramsObj.optDouble("blendStrength", def.blendStrength.toDouble()).toFloat()
                     )
                 } else {
                     artStyle.defaultParameters.copy(
-                        abstraction = obj.optDouble("abstractionLevel", 50.0).toFloat()
+                        abstraction = obj.optDouble("abstractionLevel", def.abstraction.toDouble()).toFloat()
                     )
                 }
 
@@ -142,11 +153,21 @@ class OrbitProjectRepository(private val context: Context) {
                     val paramsObj = JSONObject().apply {
                         put("abstraction", p.styleParams.abstraction.toDouble())
                         put("subjectStability", p.styleParams.subjectStability.toDouble())
-                        put("blendStrength", p.styleParams.blendStrength.toDouble())
+                        put("colorIntensity", p.styleParams.colorIntensity.toDouble())
                         put("edgeEmphasis", p.styleParams.edgeEmphasis.toDouble())
+                        put("backgroundDissolve", p.styleParams.backgroundDissolve.toDouble())
+                        put("echoStrength", p.styleParams.echoStrength.toDouble())
+                        put("echoCount", p.styleParams.echoCount.toDouble())
+                        put("perspectiveSpread", p.styleParams.perspectiveSpread.toDouble())
                         put("colorDensity", p.styleParams.colorDensity.toDouble())
+                        put("warmth", p.styleParams.warmth.toDouble())
+                        put("lightGlow", p.styleParams.lightGlow.toDouble())
+                        put("shadowDepth", p.styleParams.shadowDepth.toDouble())
                         put("softness", p.styleParams.softness.toDouble())
                         put("motionStrength", p.styleParams.motionStrength.toDouble())
+                        put("detailDensity", p.styleParams.detailDensity.toDouble())
+                        put("atmosphere", p.styleParams.atmosphere.toDouble())
+                        put("blendStrength", p.styleParams.blendStrength.toDouble())
                     }
                     put("styleParams", paramsObj)
 
