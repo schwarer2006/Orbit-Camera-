@@ -5,6 +5,7 @@ import com.example.model.OrbitArtStyle
 import com.example.model.OrbitBlendMode
 import com.example.model.OrbitStyleParameters
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.abs
@@ -74,6 +75,7 @@ object OrbitFusionEngine {
         val echoIndices = selectEchoIndices(totalImages, safeRefIndex, echoCountInt)
 
         for (i in validPaths.indices) {
+            coroutineContext.ensureActive()
             val path = validPaths[i]
             val weight = weights[i]
 
@@ -202,8 +204,10 @@ object OrbitFusionEngine {
         // 4. Shadow Depth & micro-contrast
         // 5. Light Glow / Highlight Bloom
         // 6. Contour Embossing / Edge Emphasis
+        coroutineContext.ensureActive()
         applyCreativePostProcessing(outputPixels, outWidth, outHeight, artStyle, styleParams)
 
+        coroutineContext.ensureActive()
         val resultBitmap = Bitmap.createBitmap(outWidth, outHeight, Bitmap.Config.ARGB_8888)
         resultBitmap.setPixels(outputPixels, 0, outWidth, 0, 0, outWidth, outHeight)
         resultBitmap

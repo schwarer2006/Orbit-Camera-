@@ -10,8 +10,12 @@ import androidx.camera.core.ImageProxy
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.OrbitProjectRepository
+import com.example.engine.BitmapUtils
 import com.example.model.OrbitCaptureMode
 import com.example.model.OrbitProject
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -19,9 +23,17 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import java.nio.ByteBuffer
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import kotlin.coroutines.resume
+
+enum class IntervalStatus {
+    STOPPED,
+    RUNNING,
+    PAUSED
+}
 
 data class CameraUiState(
     val activeProject: OrbitProject? = null,
@@ -33,7 +45,19 @@ data class CameraUiState(
     val anchorY: Float = 0.5f,
     val isCapturing: Boolean = false,
     val lastCapturedThumbnail: Bitmap? = null,
-    val message: String? = null
+    val message: String? = null,
+
+    // V0.4 Guided Capture: Ghost Overlay (Onion Skin)
+    val isGhostOverlayEnabled: Boolean = false,
+    val ghostOverlayAlpha: Float = 0.45f,
+    val ghostReferenceMode: String = "LAST", // "LAST" or "FIRST"
+    val ghostOverlayBitmap: Bitmap? = null,
+
+    // V0.4 Guided Capture: Interval Capture
+    val isIntervalMode: Boolean = false,
+    val intervalSeconds: Int = 3,
+    val intervalStatus: IntervalStatus = IntervalStatus.STOPPED,
+    val intervalCountdown: Int = 0
 )
 
 sealed class CameraEffect {
@@ -54,6 +78,8 @@ class CameraViewModel(
     private val _effects = MutableSharedFlow<CameraEffect>()
     val effects: SharedFlow<CameraEffect> = _effects.asSharedFlow()
 
+    private var intervalJob: Job? = null
+
     init {
         // Automatically link to latest active project or create one on first capture
         viewModelScope.launch {
@@ -64,8 +90,14 @@ class CameraViewModel(
                     _uiState.value = _uiState.value.copy(
                         activeProject = candidate,
                         selectedMode = candidate.mode,
-                        targetCount = candidate.targetCount
+                        targetCount = candidate.targetCount,
+                        isGhostOverlayEnabled = candidate.ghostOverlayEnabled,
+                        ghostOverlayAlpha = candidate.ghostOverlayAlpha,
+                        ghostReferenceMode = candidate.ghostReferenceMode,
+                        isIntervalMode = candidate.isIntervalMode,
+                        intervalSeconds = candidate.intervalSeconds
                     )
+                    loadGhostOverlayFromProject(candidate)
                 } else if (currentActive != null) {
                     val updated = projects.firstOrNull { it.id == currentActive.id }
                     if (updated != null) {
@@ -112,7 +144,137 @@ class CameraViewModel(
         _uiState.value = _uiState.value.copy(isAnchorVisible = !_uiState.value.isAnchorVisible)
     }
 
+    // Ghost Overlay (Onion Skin) Controls
+    fun toggleGhostOverlay() {
+        val nextState = !_uiState.value.isGhostOverlayEnabled
+        _uiState.value = _uiState.value.copy(isGhostOverlayEnabled = nextState)
+        val proj = _uiState.value.activeProject
+        if (proj != null) {
+            val updated = proj.copy(ghostOverlayEnabled = nextState)
+            repository.updateProject(updated)
+            if (nextState && _uiState.value.ghostOverlayBitmap == null) {
+                loadGhostOverlayFromProject(updated)
+            }
+        }
+    }
+
+    fun setGhostOverlayAlpha(alpha: Float) {
+        val clamped = alpha.coerceIn(0.05f, 0.95f)
+        _uiState.value = _uiState.value.copy(ghostOverlayAlpha = clamped)
+        val proj = _uiState.value.activeProject
+        if (proj != null) {
+            repository.updateProject(proj.copy(ghostOverlayAlpha = clamped))
+        }
+    }
+
+    fun setGhostReferenceMode(mode: String) {
+        _uiState.value = _uiState.value.copy(ghostReferenceMode = mode)
+        val proj = _uiState.value.activeProject
+        if (proj != null) {
+            repository.updateProject(proj.copy(ghostReferenceMode = mode))
+            loadGhostOverlayFromProject(proj)
+        }
+    }
+
+    private fun loadGhostOverlayFromProject(project: OrbitProject) {
+        if (project.imagePaths.isEmpty()) {
+            _uiState.value = _uiState.value.copy(ghostOverlayBitmap = null)
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val path = if (_uiState.value.ghostReferenceMode == "FIRST") {
+                project.imagePaths.firstOrNull()
+            } else {
+                project.imagePaths.lastOrNull()
+            }
+            if (path != null) {
+                val bmp = BitmapUtils.decodeSampledBitmap(path, 720, 720)
+                _uiState.value = _uiState.value.copy(ghostOverlayBitmap = bmp)
+            }
+        }
+    }
+
+    // Interval Mode Controls
+    fun toggleIntervalMode() {
+        val nextMode = !_uiState.value.isIntervalMode
+        if (!nextMode && _uiState.value.intervalStatus == IntervalStatus.RUNNING) {
+            stopIntervalCapture()
+        }
+        _uiState.value = _uiState.value.copy(isIntervalMode = nextMode)
+        val proj = _uiState.value.activeProject
+        if (proj != null) {
+            repository.updateProject(proj.copy(isIntervalMode = nextMode))
+        }
+    }
+
+    fun setIntervalSeconds(seconds: Int) {
+        val safeSeconds = seconds.coerceIn(1, 60)
+        _uiState.value = _uiState.value.copy(intervalSeconds = safeSeconds)
+        val proj = _uiState.value.activeProject
+        if (proj != null) {
+            repository.updateProject(proj.copy(intervalSeconds = safeSeconds))
+        }
+    }
+
+    fun startIntervalCapture(imageCapture: ImageCapture) {
+        if (_uiState.value.intervalStatus == IntervalStatus.RUNNING) return
+        _uiState.value = _uiState.value.copy(intervalStatus = IntervalStatus.RUNNING)
+        runIntervalLoop(imageCapture)
+    }
+
+    fun pauseIntervalCapture() {
+        intervalJob?.cancel()
+        _uiState.value = _uiState.value.copy(intervalStatus = IntervalStatus.PAUSED)
+    }
+
+    fun resumeIntervalCapture(imageCapture: ImageCapture) {
+        if (_uiState.value.intervalStatus == IntervalStatus.RUNNING) return
+        _uiState.value = _uiState.value.copy(intervalStatus = IntervalStatus.RUNNING)
+        runIntervalLoop(imageCapture)
+    }
+
+    fun stopIntervalCapture() {
+        intervalJob?.cancel()
+        _uiState.value = _uiState.value.copy(
+            intervalStatus = IntervalStatus.STOPPED,
+            intervalCountdown = 0
+        )
+    }
+
+    private fun runIntervalLoop(imageCapture: ImageCapture) {
+        intervalJob?.cancel()
+        intervalJob = viewModelScope.launch {
+            while (_uiState.value.intervalStatus == IntervalStatus.RUNNING) {
+                val proj = _uiState.value.activeProject
+                val target = _uiState.value.targetCount
+                val current = proj?.actualCount ?: 0
+                if (current >= target) {
+                    stopIntervalCapture()
+                    break
+                }
+
+                val totalSec = _uiState.value.intervalSeconds
+                for (s in totalSec downTo 1) {
+                    if (_uiState.value.intervalStatus != IntervalStatus.RUNNING) break
+                    _uiState.value = _uiState.value.copy(intervalCountdown = s)
+                    delay(1000L)
+                }
+
+                if (_uiState.value.intervalStatus != IntervalStatus.RUNNING) break
+                _uiState.value = _uiState.value.copy(intervalCountdown = 0)
+
+                // Sequential capture - wait for capture callback before proceeding to next interval
+                val success = suspendCapturePhoto(imageCapture)
+                if (!success) {
+                    delay(500L)
+                }
+                delay(200L)
+            }
+        }
+    }
+
     fun startNewSeries() {
+        stopIntervalCapture()
         val newProj = repository.createProject(
             mode = _uiState.value.selectedMode,
             targetCount = _uiState.value.targetCount
@@ -120,72 +282,111 @@ class CameraViewModel(
         _uiState.value = _uiState.value.copy(
             activeProject = newProj,
             lastCapturedThumbnail = null,
+            ghostOverlayBitmap = null,
             message = "Neue Serie '${newProj.name}' gestartet"
         )
     }
 
     fun setActiveProject(project: OrbitProject) {
+        stopIntervalCapture()
         _uiState.value = _uiState.value.copy(
             activeProject = project,
             selectedMode = project.mode,
-            targetCount = project.targetCount
+            targetCount = project.targetCount,
+            isGhostOverlayEnabled = project.ghostOverlayEnabled,
+            ghostOverlayAlpha = project.ghostOverlayAlpha,
+            ghostReferenceMode = project.ghostReferenceMode,
+            isIntervalMode = project.isIntervalMode,
+            intervalSeconds = project.intervalSeconds
         )
+        loadGhostOverlayFromProject(project)
     }
 
     fun capturePhoto(imageCapture: ImageCapture) {
-        if (_uiState.value.isCapturing) return
-
-        var project = _uiState.value.activeProject
-        if (project == null) {
-            project = repository.createProject(
-                mode = _uiState.value.selectedMode,
-                targetCount = _uiState.value.targetCount
-            )
-            _uiState.value = _uiState.value.copy(activeProject = project)
+        viewModelScope.launch {
+            suspendCapturePhoto(imageCapture)
         }
+    }
 
-        _uiState.value = _uiState.value.copy(isCapturing = true)
+    private suspend fun suspendCapturePhoto(imageCapture: ImageCapture): Boolean =
+        suspendCancellableCoroutine { continuation ->
+            if (_uiState.value.isCapturing) {
+                continuation.resume(false)
+                return@suspendCancellableCoroutine
+            }
 
-        imageCapture.takePicture(
-            cameraExecutor,
-            object : ImageCapture.OnImageCapturedCallback() {
-                override fun onCaptureSuccess(imageProxy: ImageProxy) {
-                    val bitmap = imageProxyToBitmap(imageProxy)
-                    imageProxy.close()
+            var project = _uiState.value.activeProject
+            if (project == null) {
+                project = repository.createProject(
+                    mode = _uiState.value.selectedMode,
+                    targetCount = _uiState.value.targetCount
+                )
+                _uiState.value = _uiState.value.copy(activeProject = project)
+            }
 
-                    viewModelScope.launch {
-                        _effects.emit(CameraEffect.ShutterFlash)
-                        if (bitmap != null) {
-                            val updatedProject = repository.addCapture(project.id, bitmap)
-                            _uiState.value = _uiState.value.copy(
-                                isCapturing = false,
-                                activeProject = updatedProject ?: project,
-                                lastCapturedThumbnail = bitmap
-                            )
+            _uiState.value = _uiState.value.copy(isCapturing = true)
 
-                            if (updatedProject != null && updatedProject.isCompleted) {
-                                _effects.emit(CameraEffect.SeriesFinished(updatedProject))
+            imageCapture.takePicture(
+                cameraExecutor,
+                object : ImageCapture.OnImageCapturedCallback() {
+                    override fun onCaptureSuccess(imageProxy: ImageProxy) {
+                        val bitmap = imageProxyToBitmap(imageProxy)
+                        imageProxy.close()
+
+                        viewModelScope.launch {
+                            _effects.emit(CameraEffect.ShutterFlash)
+                            if (bitmap != null) {
+                                val updatedProject = repository.addCapture(project.id, bitmap)
+
+                                // Downsample thumbnail for ghost overlay and UI memory efficiency
+                                val ghostBmp = Bitmap.createScaledBitmap(
+                                    bitmap,
+                                    720,
+                                    (720f * bitmap.height / bitmap.width).toInt().coerceAtLeast(1),
+                                    true
+                                )
+
+                                val currentGhost = _uiState.value.ghostOverlayBitmap
+                                val newGhost = if (_uiState.value.ghostReferenceMode == "FIRST") {
+                                    currentGhost ?: ghostBmp
+                                } else {
+                                    ghostBmp
+                                }
+
+                                _uiState.value = _uiState.value.copy(
+                                    isCapturing = false,
+                                    activeProject = updatedProject ?: project,
+                                    lastCapturedThumbnail = bitmap,
+                                    ghostOverlayBitmap = newGhost
+                                )
+
+                                if (updatedProject != null && updatedProject.isCompleted) {
+                                    _effects.emit(CameraEffect.SeriesFinished(updatedProject))
+                                    stopIntervalCapture()
+                                }
+                                continuation.resume(true)
+                            } else {
+                                _uiState.value = _uiState.value.copy(
+                                    isCapturing = false,
+                                    message = "Aufnahmeverarbeitung fehlgeschlagen"
+                                )
+                                continuation.resume(false)
                             }
-                        } else {
+                        }
+                    }
+
+                    override fun onError(exception: ImageCaptureException) {
+                        viewModelScope.launch {
                             _uiState.value = _uiState.value.copy(
                                 isCapturing = false,
-                                message = "Aufnahmeverarbeitung fehlgeschlagen"
+                                message = "Kamerafehler: ${exception.message}"
                             )
+                            continuation.resume(false)
                         }
                     }
                 }
-
-                override fun onError(exception: ImageCaptureException) {
-                    viewModelScope.launch {
-                        _uiState.value = _uiState.value.copy(
-                            isCapturing = false,
-                            message = "Kamerafehler: ${exception.message}"
-                        )
-                    }
-                }
-            }
-        )
-    }
+            )
+        }
 
     private fun imageProxyToBitmap(image: ImageProxy): Bitmap? {
         return try {
@@ -216,6 +417,7 @@ class CameraViewModel(
 
     override fun onCleared() {
         super.onCleared()
+        stopIntervalCapture()
         cameraExecutor.shutdown()
     }
 }

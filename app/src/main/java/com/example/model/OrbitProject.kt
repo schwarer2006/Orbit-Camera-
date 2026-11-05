@@ -58,9 +58,15 @@ data class OrbitProject(
     val offsetX: Float = 0f,
     val offsetY: Float = 0f,
     val blendMode: OrbitBlendMode = OrbitBlendMode.WEIGHTED_AVERAGE,
-    val artStyle: OrbitArtStyle = OrbitArtStyle.IMPRESSIONIST,
-    val styleParams: OrbitStyleParameters = OrbitArtStyle.IMPRESSIONIST.defaultParameters,
-    val lastRenderedPath: String? = null
+    val artStyle: OrbitArtStyle = OrbitArtStyle.IN_THE_ROUND,
+    val styleParams: OrbitStyleParameters = OrbitArtStyle.IN_THE_ROUND.defaultParameters,
+    val lastRenderedPath: String? = null,
+    // V0.4 Guided Capture & Stability fields
+    val ghostOverlayEnabled: Boolean = false,
+    val ghostOverlayAlpha: Float = 0.45f,
+    val ghostReferenceMode: String = "PREVIOUS", // "PREVIOUS" oder "FIRST"
+    val isIntervalMode: Boolean = false,
+    val intervalSeconds: Int = 3 // 2, 3, 5, 10
 ) {
     val actualCount: Int
         get() = imagePaths.size

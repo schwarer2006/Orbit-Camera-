@@ -120,7 +120,12 @@ class OrbitProjectRepository(private val context: Context) {
                     },
                     artStyle = artStyle,
                     styleParams = styleParams,
-                    lastRenderedPath = obj.optString("lastRenderedPath", null).takeIf { it != "null" && it?.isNotBlank() == true }
+                    lastRenderedPath = obj.optString("lastRenderedPath", null).takeIf { it != "null" && it?.isNotBlank() == true },
+                    ghostOverlayEnabled = obj.optBoolean("ghostOverlayEnabled", false),
+                    ghostOverlayAlpha = obj.optDouble("ghostOverlayAlpha", 0.45).toFloat(),
+                    ghostReferenceMode = obj.optString("ghostReferenceMode", "PREVIOUS"),
+                    isIntervalMode = obj.optBoolean("isIntervalMode", false),
+                    intervalSeconds = obj.optInt("intervalSeconds", 3)
                 )
                 list.add(project)
             }
@@ -172,6 +177,11 @@ class OrbitProjectRepository(private val context: Context) {
                     put("styleParams", paramsObj)
 
                     put("lastRenderedPath", p.lastRenderedPath ?: JSONObject.NULL)
+                    put("ghostOverlayEnabled", p.ghostOverlayEnabled)
+                    put("ghostOverlayAlpha", p.ghostOverlayAlpha.toDouble())
+                    put("ghostReferenceMode", p.ghostReferenceMode)
+                    put("isIntervalMode", p.isIntervalMode)
+                    put("intervalSeconds", p.intervalSeconds)
                 }
                 array.put(obj)
             }

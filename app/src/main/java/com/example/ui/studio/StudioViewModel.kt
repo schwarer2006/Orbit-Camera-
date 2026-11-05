@@ -13,7 +13,9 @@ import com.example.model.OrbitArtStyle
 import com.example.model.OrbitBlendMode
 import com.example.model.OrbitProject
 import com.example.model.OrbitStyleParameters
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -63,7 +65,9 @@ class StudioViewModel(
     private val _effects = MutableSharedFlow<StudioEffect>()
     val effects: SharedFlow<StudioEffect> = _effects.asSharedFlow()
 
-    private var renderJob: Job? = null
+    private var debounceRenderJob: Job? = null
+    private var renderGeneration: Long = 0L
+    private val previewDimension: Int = 720
 
     init {
         viewModelScope.launch {
@@ -102,16 +106,7 @@ class StudioViewModel(
         )
 
         loadReferenceBitmap(project, refIndex)
-        triggerFusion(
-            project = project,
-            artStyle = project.artStyle,
-            params = project.styleParams,
-            refIndex = refIndex,
-            offsetX = project.offsetX,
-            offsetY = project.offsetY,
-            shifts = emptyMap(),
-            blendMode = project.blendMode
-        )
+        scheduleDebouncedFusion(delayMs = 0L)
     }
 
     private fun loadReferenceBitmap(project: OrbitProject, refIndex: Int) {
@@ -134,112 +129,42 @@ class StudioViewModel(
             selectedArtStyle = style,
             styleParameters = newParams
         )
-        val project = _uiState.value.activeProject ?: return
-        triggerFusion(
-            project = project,
-            artStyle = style,
-            params = newParams,
-            refIndex = _uiState.value.selectedRefIndex,
-            offsetX = _uiState.value.offsetX,
-            offsetY = _uiState.value.offsetY,
-            shifts = _uiState.value.individualShifts,
-            blendMode = _uiState.value.blendMode
-        )
+        scheduleDebouncedFusion(delayMs = 0L)
     }
 
     fun setAbstraction(value: Float) {
         val updatedParams = _uiState.value.styleParameters.copy(abstraction = value)
         _uiState.value = _uiState.value.copy(styleParameters = updatedParams)
-        val project = _uiState.value.activeProject ?: return
-        triggerFusion(
-            project = project,
-            artStyle = _uiState.value.selectedArtStyle,
-            params = updatedParams,
-            refIndex = _uiState.value.selectedRefIndex,
-            offsetX = _uiState.value.offsetX,
-            offsetY = _uiState.value.offsetY,
-            shifts = _uiState.value.individualShifts,
-            blendMode = _uiState.value.blendMode
-        )
+        scheduleDebouncedFusion(delayMs = 280L)
     }
 
     fun setSubjectStability(value: Float) {
         val updatedParams = _uiState.value.styleParameters.copy(subjectStability = value)
         _uiState.value = _uiState.value.copy(styleParameters = updatedParams)
-        val project = _uiState.value.activeProject ?: return
-        triggerFusion(
-            project = project,
-            artStyle = _uiState.value.selectedArtStyle,
-            params = updatedParams,
-            refIndex = _uiState.value.selectedRefIndex,
-            offsetX = _uiState.value.offsetX,
-            offsetY = _uiState.value.offsetY,
-            shifts = _uiState.value.individualShifts,
-            blendMode = _uiState.value.blendMode
-        )
+        scheduleDebouncedFusion(delayMs = 280L)
     }
 
     fun setColorIntensity(value: Float) {
         val updatedParams = _uiState.value.styleParameters.copy(colorIntensity = value)
         _uiState.value = _uiState.value.copy(styleParameters = updatedParams)
-        val project = _uiState.value.activeProject ?: return
-        triggerFusion(
-            project = project,
-            artStyle = _uiState.value.selectedArtStyle,
-            params = updatedParams,
-            refIndex = _uiState.value.selectedRefIndex,
-            offsetX = _uiState.value.offsetX,
-            offsetY = _uiState.value.offsetY,
-            shifts = _uiState.value.individualShifts,
-            blendMode = _uiState.value.blendMode
-        )
+        scheduleDebouncedFusion(delayMs = 280L)
     }
 
     fun setEdgeEmphasis(value: Float) {
         val updatedParams = _uiState.value.styleParameters.copy(edgeEmphasis = value)
         _uiState.value = _uiState.value.copy(styleParameters = updatedParams)
-        val project = _uiState.value.activeProject ?: return
-        triggerFusion(
-            project = project,
-            artStyle = _uiState.value.selectedArtStyle,
-            params = updatedParams,
-            refIndex = _uiState.value.selectedRefIndex,
-            offsetX = _uiState.value.offsetX,
-            offsetY = _uiState.value.offsetY,
-            shifts = _uiState.value.individualShifts,
-            blendMode = _uiState.value.blendMode
-        )
+        scheduleDebouncedFusion(delayMs = 280L)
     }
 
     fun setBackgroundDissolve(value: Float) {
         val updatedParams = _uiState.value.styleParameters.copy(backgroundDissolve = value)
         _uiState.value = _uiState.value.copy(styleParameters = updatedParams)
-        val project = _uiState.value.activeProject ?: return
-        triggerFusion(
-            project = project,
-            artStyle = _uiState.value.selectedArtStyle,
-            params = updatedParams,
-            refIndex = _uiState.value.selectedRefIndex,
-            offsetX = _uiState.value.offsetX,
-            offsetY = _uiState.value.offsetY,
-            shifts = _uiState.value.individualShifts,
-            blendMode = _uiState.value.blendMode
-        )
+        scheduleDebouncedFusion(delayMs = 280L)
     }
 
     fun updateStyleParameters(params: OrbitStyleParameters) {
         _uiState.value = _uiState.value.copy(styleParameters = params)
-        val project = _uiState.value.activeProject ?: return
-        triggerFusion(
-            project = project,
-            artStyle = _uiState.value.selectedArtStyle,
-            params = params,
-            refIndex = _uiState.value.selectedRefIndex,
-            offsetX = _uiState.value.offsetX,
-            offsetY = _uiState.value.offsetY,
-            shifts = _uiState.value.individualShifts,
-            blendMode = _uiState.value.blendMode
-        )
+        scheduleDebouncedFusion(delayMs = 280L)
     }
 
     fun runAutoAlignment() {
@@ -255,16 +180,7 @@ class StudioViewModel(
                 autoAlignApplied = true,
                 message = "Automatische 2D-Ausrichtung angewendet"
             )
-            triggerFusion(
-                project = project,
-                artStyle = _uiState.value.selectedArtStyle,
-                params = _uiState.value.styleParameters,
-                refIndex = _uiState.value.selectedRefIndex,
-                offsetX = _uiState.value.offsetX,
-                offsetY = _uiState.value.offsetY,
-                shifts = shifts,
-                blendMode = _uiState.value.blendMode
-            )
+            scheduleDebouncedFusion(delayMs = 0L)
         }
     }
 
@@ -276,32 +192,12 @@ class StudioViewModel(
             offsetY = 0f,
             message = "Ausrichtung zurückgesetzt"
         )
-        val project = _uiState.value.activeProject ?: return
-        triggerFusion(
-            project = project,
-            artStyle = _uiState.value.selectedArtStyle,
-            params = _uiState.value.styleParameters,
-            refIndex = _uiState.value.selectedRefIndex,
-            offsetX = 0f,
-            offsetY = 0f,
-            shifts = emptyMap(),
-            blendMode = _uiState.value.blendMode
-        )
+        scheduleDebouncedFusion(delayMs = 0L)
     }
 
     fun setBlendMode(mode: OrbitBlendMode) {
         _uiState.value = _uiState.value.copy(blendMode = mode)
-        val project = _uiState.value.activeProject ?: return
-        triggerFusion(
-            project = project,
-            artStyle = _uiState.value.selectedArtStyle,
-            params = _uiState.value.styleParameters,
-            refIndex = _uiState.value.selectedRefIndex,
-            offsetX = _uiState.value.offsetX,
-            offsetY = _uiState.value.offsetY,
-            shifts = _uiState.value.individualShifts,
-            blendMode = mode
-        )
+        scheduleDebouncedFusion(delayMs = 0L)
     }
 
     fun selectReferenceIndex(index: Int) {
@@ -309,31 +205,12 @@ class StudioViewModel(
         if (index !in project.imagePaths.indices) return
         _uiState.value = _uiState.value.copy(selectedRefIndex = index)
         loadReferenceBitmap(project, index)
-        triggerFusion(
-            project = project,
-            artStyle = _uiState.value.selectedArtStyle,
-            params = _uiState.value.styleParameters,
-            refIndex = index,
-            offsetX = _uiState.value.offsetX,
-            offsetY = _uiState.value.offsetY,
-            shifts = _uiState.value.individualShifts,
-            blendMode = _uiState.value.blendMode
-        )
+        scheduleDebouncedFusion(delayMs = 0L)
     }
 
     fun setOffset(x: Float, y: Float) {
         _uiState.value = _uiState.value.copy(offsetX = x, offsetY = y)
-        val project = _uiState.value.activeProject ?: return
-        triggerFusion(
-            project = project,
-            artStyle = _uiState.value.selectedArtStyle,
-            params = _uiState.value.styleParameters,
-            refIndex = _uiState.value.selectedRefIndex,
-            offsetX = x,
-            offsetY = y,
-            shifts = _uiState.value.individualShifts,
-            blendMode = _uiState.value.blendMode
-        )
+        scheduleDebouncedFusion(delayMs = 280L)
     }
 
     fun toggleComparison(showOriginal: Boolean) {
@@ -341,78 +218,84 @@ class StudioViewModel(
     }
 
     fun recompute() {
-        val state = _uiState.value
-        val project = state.activeProject ?: return
-        triggerFusion(
-            project = project,
-            artStyle = state.selectedArtStyle,
-            params = state.styleParameters,
-            refIndex = state.selectedRefIndex,
-            offsetX = state.offsetX,
-            offsetY = state.offsetY,
-            shifts = state.individualShifts,
-            blendMode = state.blendMode
-        )
+        scheduleDebouncedFusion(delayMs = 0L)
     }
 
-    private fun triggerFusion(
-        project: OrbitProject,
-        artStyle: OrbitArtStyle,
-        params: OrbitStyleParameters,
-        refIndex: Int,
-        offsetX: Float,
-        offsetY: Float,
-        shifts: Map<Int, Pair<Float, Float>>,
-        blendMode: OrbitBlendMode
-    ) {
-        if (project.imagePaths.isEmpty()) return
+    private fun scheduleDebouncedFusion(delayMs: Long = 280L) {
+        debounceRenderJob?.cancel()
+        debounceRenderJob = viewModelScope.launch {
+            if (delayMs > 0) {
+                delay(delayMs)
+            }
 
-        renderJob?.cancel()
-        renderJob = viewModelScope.launch {
+            val state = _uiState.value
+            val project = state.activeProject ?: return@launch
+            if (project.imagePaths.isEmpty()) return@launch
+
+            val thisGen = ++renderGeneration
+
             _uiState.value = _uiState.value.copy(
                 isRendering = true,
                 renderProgress = FusionProgress(0, project.actualCount, "Vorbereitung...")
             )
 
             val updatedProject = project.copy(
-                artStyle = artStyle,
-                styleParams = params,
-                abstractionLevel = params.abstraction,
-                blendMode = blendMode,
-                referenceImageIndex = refIndex,
-                offsetX = offsetX,
-                offsetY = offsetY
+                artStyle = state.selectedArtStyle,
+                styleParams = state.styleParameters,
+                abstractionLevel = state.styleParameters.abstraction,
+                blendMode = state.blendMode,
+                referenceImageIndex = state.selectedRefIndex,
+                offsetX = state.offsetX,
+                offsetY = state.offsetY
             )
             repository.updateProject(updatedProject)
 
-            val result = OrbitFusionEngine.renderFusion(
-                imagePaths = project.imagePaths,
-                referenceIndex = refIndex,
-                artStyle = artStyle,
-                styleParams = params,
-                individualShifts = shifts,
-                globalOffsetX = offsetX,
-                globalOffsetY = offsetY,
-                blendMode = blendMode,
-                targetWidth = 1080,
-                targetHeight = 1080,
-                onProgress = { progress ->
-                    _uiState.value = _uiState.value.copy(renderProgress = progress)
+            try {
+                val result = OrbitFusionEngine.renderFusion(
+                    imagePaths = project.imagePaths,
+                    referenceIndex = state.selectedRefIndex,
+                    artStyle = state.selectedArtStyle,
+                    styleParams = state.styleParameters,
+                    individualShifts = state.individualShifts,
+                    globalOffsetX = state.offsetX,
+                    globalOffsetY = state.offsetY,
+                    blendMode = state.blendMode,
+                    targetWidth = previewDimension,
+                    targetHeight = previewDimension,
+                    onProgress = { progress ->
+                        if (thisGen == renderGeneration) {
+                            _uiState.value = _uiState.value.copy(renderProgress = progress)
+                        }
+                    }
+                )
+
+                if (thisGen == renderGeneration) {
+                    if (result != null) {
+                        val previewFile = File(getApplication<Application>().cacheDir, "preview_${project.id}.jpg")
+                        BitmapUtils.saveBitmapToFile(result, previewFile, quality = 90)
+                        repository.updateProject(updatedProject.copy(lastRenderedPath = previewFile.absolutePath))
+                    }
+
+                    _uiState.value = _uiState.value.copy(
+                        renderedBitmap = result,
+                        isRendering = false,
+                        renderProgress = null,
+                        activeProject = updatedProject
+                    )
                 }
-            )
-
-            if (result != null) {
-                val previewFile = File(getApplication<Application>().cacheDir, "preview_${project.id}.jpg")
-                BitmapUtils.saveBitmapToFile(result, previewFile, quality = 90)
-                repository.updateProject(updatedProject.copy(lastRenderedPath = previewFile.absolutePath))
+            } catch (ce: CancellationException) {
+                // Cancelled cooperatively by a newer slider movement or action
+                throw ce
+            } catch (t: Throwable) {
+                t.printStackTrace()
+                if (thisGen == renderGeneration) {
+                    _uiState.value = _uiState.value.copy(
+                        isRendering = false,
+                        renderProgress = null,
+                        message = "Fusionsfehler: ${t.localizedMessage ?: "Unbekannter Fehler"}"
+                    )
+                }
             }
-
-            _uiState.value = _uiState.value.copy(
-                renderedBitmap = result,
-                isRendering = false,
-                renderProgress = null,
-                activeProject = updatedProject
-            )
         }
     }
 
