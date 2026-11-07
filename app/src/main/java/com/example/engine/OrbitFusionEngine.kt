@@ -3,6 +3,7 @@ package com.example.engine
 import android.graphics.Bitmap
 import com.example.model.OrbitArtStyle
 import com.example.model.OrbitBlendMode
+import com.example.model.OrbitCompositionStrategy
 import com.example.model.OrbitStyleParameters
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
@@ -27,13 +28,14 @@ object OrbitFusionEngine {
 
     /**
      * Compute a fused artistic composite from a list of real image files
-     * according to the chosen artistic style preset and parameters.
+     * according to the chosen artistic style preset, composition strategy, and parameters.
      * Uses sequential memory-safe decoding with an accumulator buffer.
      */
     suspend fun renderFusion(
         imagePaths: List<String>,
         referenceIndex: Int,
         artStyle: OrbitArtStyle = OrbitArtStyle.IN_THE_ROUND,
+        compositionStrategy: OrbitCompositionStrategy = OrbitCompositionStrategy.SUBJECT_CENTERED,
         styleParams: OrbitStyleParameters = artStyle.defaultParameters,
         individualShifts: Map<Int, Pair<Float, Float>> = emptyMap(),
         globalOffsetX: Float = 0f,
@@ -49,168 +51,181 @@ object OrbitFusionEngine {
         val totalImages = validPaths.size
         val safeRefIndex = referenceIndex.coerceIn(0, totalImages - 1)
 
-        onProgress(FusionProgress(0, totalImages, "Stil '${artStyle.title}' initialisieren..."))
+        val strategyLabel = if (compositionStrategy == OrbitCompositionStrategy.STRUCTURAL_FIELD) "Flächenfeld" else "Motivzentriert"
+        onProgress(FusionProgress(0, totalImages, "Stil '${artStyle.title}' ($strategyLabel) vorbereiten..."))
 
-        // Compute weights based on art style, subject stability, and abstraction
-        val weights = calculateStyleWeights(totalImages, safeRefIndex, artStyle, styleParams)
+        // Compute weights based on art style, composition strategy, subject stability, and abstraction
+        val weights = calculateStyleWeights(totalImages, safeRefIndex, artStyle, compositionStrategy, styleParams)
 
         val outWidth = targetWidth
         val outHeight = targetHeight
 
-        val accumR = FloatArray(outWidth * outHeight)
-        val accumG = FloatArray(outWidth * outHeight)
-        val accumB = FloatArray(outWidth * outHeight)
-        val accumWeight = FloatArray(outWidth * outHeight)
+        return@withContext try {
+            val accumR = FloatArray(outWidth * outHeight)
+            val accumG = FloatArray(outWidth * outHeight)
+            val accumB = FloatArray(outWidth * outHeight)
+            val accumWeight = FloatArray(outWidth * outHeight)
 
-        // Secondary accumulator for high-contrast perspective contours/echoes
-        val echoAccumR = FloatArray(outWidth * outHeight)
-        val echoAccumG = FloatArray(outWidth * outHeight)
-        val echoAccumB = FloatArray(outWidth * outHeight)
-        val echoAccumWeight = FloatArray(outWidth * outHeight)
+            val tempPixels = IntArray(outWidth * outHeight)
 
-        val tempPixels = IntArray(outWidth * outHeight)
+            // Determine discrete echo frame indices across the series
+            val echoCountInt = styleParams.echoCount.roundToInt().coerceIn(3, 12)
+            val echoIndices = selectEchoIndices(totalImages, safeRefIndex, echoCountInt)
+            val hasEchoes = (styleParams.echoStrength > 10f && echoIndices.isNotEmpty())
 
-        // Determine discrete echo frame indices across the series (for distinct Pepa Ventosa perspective outlines)
-        val echoCountInt = styleParams.echoCount.roundToInt().coerceIn(3, 12)
-        val echoIndices = selectEchoIndices(totalImages, safeRefIndex, echoCountInt)
+            // Allocate secondary echo accumulator only if echo contours are enabled to conserve memory
+            val echoAccumR = if (hasEchoes) FloatArray(outWidth * outHeight) else null
+            val echoAccumG = if (hasEchoes) FloatArray(outWidth * outHeight) else null
+            val echoAccumB = if (hasEchoes) FloatArray(outWidth * outHeight) else null
+            val echoAccumWeight = if (hasEchoes) FloatArray(outWidth * outHeight) else null
 
-        for (i in validPaths.indices) {
+            for (i in validPaths.indices) {
+                coroutineContext.ensureActive()
+                val path = validPaths[i]
+                val weight = weights[i]
+
+                onProgress(FusionProgress(i + 1, totalImages, "${artStyle.title}: Überlagere Perspektive ${i + 1}/$totalImages..."))
+
+                // Decode single image sampled to requested dimensions
+                val sourceBitmap = BitmapUtils.decodeSampledBitmap(path, outWidth, outHeight) ?: continue
+
+                // Center-fit crop to exact aspect ratio (1:1, 4:5, 16:9) without distortion
+                val fittedBitmap = BitmapUtils.cropCenterFit(sourceBitmap, outWidth, outHeight)
+                fittedBitmap.getPixels(tempPixels, 0, outWidth, 0, 0, outWidth, outHeight)
+                fittedBitmap.recycle()
+
+                // Calculate shift: combine global offset, individual shift, and perspective spread
+                val isReference = (i == safeRefIndex)
+                val indShift = individualShifts[i] ?: Pair(0f, 0f)
+
+                // Perspective spread calculations:
+                // - SUBJECT_CENTERED: angular orbit spread around the focal motif
+                // - STRUCTURAL_FIELD: planar wave grid spread weaving textures across the full field
+                val spreadFactor = (styleParams.perspectiveSpread / 100f) * (outWidth / 180f)
+                val spreadOffsetX: Float
+                val spreadOffsetY: Float
+                if (compositionStrategy == OrbitCompositionStrategy.STRUCTURAL_FIELD) {
+                    val phaseX = (i * 1.618f)
+                    val phaseY = (i * 2.414f)
+                    spreadOffsetX = if (!isReference) (cos(phaseX) * spreadFactor * 0.85f).toFloat() else 0f
+                    spreadOffsetY = if (!isReference) (sin(phaseY) * spreadFactor * 0.70f).toFloat() else 0f
+                } else {
+                    val angleRad = (i.toFloat() / max(1, totalImages)) * (2.0 * Math.PI)
+                    spreadOffsetX = if (!isReference) (cos(angleRad) * spreadFactor).toFloat() else 0f
+                    spreadOffsetY = if (!isReference) (sin(angleRad) * spreadFactor * 0.65f).toFloat() else 0f
+                }
+
+                // Motion flow creates directional shift along series sequence
+                val motionOffsetX = if (artStyle == OrbitArtStyle.MOTION_FLOW) {
+                    (i - safeRefIndex).toFloat() * (styleParams.motionStrength / 100f) * 5.0f
+                } else 0f
+
+                val motionOffsetY = if (artStyle == OrbitArtStyle.MOTION_FLOW) {
+                    (i - safeRefIndex).toFloat() * (styleParams.motionStrength / 100f) * 1.8f
+                } else 0f
+
+                val totalShiftX = ((if (isReference) globalOffsetX else 0f) + indShift.first + spreadOffsetX + motionOffsetX) * (outWidth / 400f)
+                val totalShiftY = ((if (isReference) globalOffsetY else 0f) + indShift.second + spreadOffsetY + motionOffsetY) * (outHeight / 400f)
+
+                val shiftX = totalShiftX.roundToInt()
+                val shiftY = totalShiftY.roundToInt()
+
+                // Accumulate pixels based on art style specific fusion strategy
+                when (artStyle) {
+                    OrbitArtStyle.IN_THE_ROUND -> {
+                        accumulateInTheRound(
+                            tempPixels, accumR, accumG, accumB, accumWeight,
+                            outWidth, outHeight, weight, shiftX, shiftY, isReference, compositionStrategy, styleParams
+                        )
+                    }
+                    OrbitArtStyle.IMPRESSIONIST -> {
+                        accumulateImpressionist(
+                            tempPixels, accumR, accumG, accumB, accumWeight,
+                            outWidth, outHeight, weight, shiftX, shiftY, isReference, styleParams
+                        )
+                    }
+                    OrbitArtStyle.ARCHITECTURAL -> {
+                        accumulateArchitectural(
+                            tempPixels, accumR, accumG, accumB, accumWeight,
+                            outWidth, outHeight, weight, shiftX, shiftY, isReference, styleParams
+                        )
+                    }
+                    OrbitArtStyle.ETHEREAL -> {
+                        accumulateEthereal(
+                            tempPixels, accumR, accumG, accumB, accumWeight,
+                            outWidth, outHeight, weight, shiftX, shiftY, isReference, styleParams
+                        )
+                    }
+                    OrbitArtStyle.MOTION_FLOW -> {
+                        accumulateMotionFlow(
+                            tempPixels, accumR, accumG, accumB, accumWeight,
+                            outWidth, outHeight, weight, shiftX, shiftY, isReference, styleParams
+                        )
+                    }
+                    OrbitArtStyle.URBAN_LAYERS -> {
+                        accumulateUrbanLayers(
+                            tempPixels, accumR, accumG, accumB, accumWeight,
+                            outWidth, outHeight, weight, shiftX, shiftY, isReference, styleParams
+                        )
+                    }
+                }
+
+                // If this is one of the chosen key perspective echo frames, capture its contour layer
+                if (i in echoIndices && !isReference && hasEchoes && echoAccumR != null && echoAccumG != null && echoAccumB != null && echoAccumWeight != null) {
+                    accumulateEchoContours(
+                        tempPixels, echoAccumR, echoAccumG, echoAccumB, echoAccumWeight,
+                        outWidth, outHeight, shiftX, shiftY, styleParams
+                    )
+                }
+            }
+
+            onProgress(FusionProgress(totalImages, totalImages, "Künstlerische Farbkurven & Konturen veredeln..."))
+
+            // Create base fused pixel array
+            val outputPixels = IntArray(outWidth * outHeight)
+            val echoWeightNormalized = (styleParams.echoStrength / 100f) * 0.48f
+
+            for (idx in outputPixels.indices) {
+                val w = accumWeight[idx]
+                var r = if (w > 0f) (accumR[idx] / w) else 0f
+                var g = if (w > 0f) (accumG[idx] / w) else 0f
+                var b = if (w > 0f) (accumB[idx] / w) else 0f
+
+                // Blend discrete perspective echoes into the composition
+                val ew = echoAccumWeight?.get(idx) ?: 0f
+                if (ew > 0f && echoWeightNormalized > 0f && echoAccumR != null && echoAccumG != null && echoAccumB != null) {
+                    val er = echoAccumR[idx] / ew
+                    val eg = echoAccumG[idx] / ew
+                    val eb = echoAccumB[idx] / ew
+
+                    // Overlay high-frequency perspective contours
+                    r = (r * (1f - echoWeightNormalized) + er * echoWeightNormalized).coerceIn(0f, 255f)
+                    g = (g * (1f - echoWeightNormalized) + eg * echoWeightNormalized).coerceIn(0f, 255f)
+                    b = (b * (1f - echoWeightNormalized) + eb * echoWeightNormalized).coerceIn(0f, 255f)
+                }
+
+                outputPixels[idx] = (0xFF shl 24) or (r.roundToInt() shl 16) or (g.roundToInt() shl 8) or b.roundToInt()
+            }
+
+            // Apply advanced post-processing:
+            // 1. Vibrance (boosts unsaturated tones without clipping vibrant colors)
+            // 2. Color Intensity & Color Density (deep rich photographic colors)
+            // 3. Contrast (S-curve tonality preserving shadows/highlights)
+            // 4. Warmth (-100 cool/blue .. 0 neutral .. +100 warm/gold)
+            // 5. Background Dissolve (radial for subject, uniform edge-aware for structural field)
+            // 6. Contour Embossing / Edge Emphasis
             coroutineContext.ensureActive()
-            val path = validPaths[i]
-            val weight = weights[i]
+            applyCreativePostProcessing(outputPixels, outWidth, outHeight, artStyle, compositionStrategy, styleParams)
 
-            onProgress(FusionProgress(i + 1, totalImages, "${artStyle.title}: Überlagere Perspektive ${i + 1}/$totalImages..."))
-
-            // Decode single image sampled to requested dimensions
-            val sourceBitmap = BitmapUtils.decodeSampledBitmap(path, outWidth, outHeight) ?: continue
-
-            val scaledBitmap = if (sourceBitmap.width != outWidth || sourceBitmap.height != outHeight) {
-                Bitmap.createScaledBitmap(sourceBitmap, outWidth, outHeight, true).also {
-                    if (it != sourceBitmap) sourceBitmap.recycle()
-                }
-            } else {
-                sourceBitmap
-            }
-
-            scaledBitmap.getPixels(tempPixels, 0, outWidth, 0, 0, outWidth, outHeight)
-            scaledBitmap.recycle()
-
-            // Calculate shift: combine global offset, individual shift, and perspective spread
-            val isReference = (i == safeRefIndex)
-            val indShift = individualShifts[i] ?: Pair(0f, 0f)
-
-            // Perspective spread calculations: angular spread around the subject
-            val spreadFactor = (styleParams.perspectiveSpread / 100f) * (outWidth / 180f)
-            val angleRad = (i.toFloat() / max(1, totalImages)) * (2.0 * Math.PI)
-            val spreadOffsetX = if (!isReference) (cos(angleRad) * spreadFactor).toFloat() else 0f
-            val spreadOffsetY = if (!isReference) (sin(angleRad) * spreadFactor * 0.65f).toFloat() else 0f
-
-            // Motion flow creates directional shift along series sequence
-            val motionOffsetX = if (artStyle == OrbitArtStyle.MOTION_FLOW) {
-                (i - safeRefIndex).toFloat() * (styleParams.motionStrength / 100f) * 5.0f
-            } else 0f
-
-            val motionOffsetY = if (artStyle == OrbitArtStyle.MOTION_FLOW) {
-                (i - safeRefIndex).toFloat() * (styleParams.motionStrength / 100f) * 1.8f
-            } else 0f
-
-            val totalShiftX = ((if (isReference) globalOffsetX else 0f) + indShift.first + spreadOffsetX + motionOffsetX) * (outWidth / 400f)
-            val totalShiftY = ((if (isReference) globalOffsetY else 0f) + indShift.second + spreadOffsetY + motionOffsetY) * (outHeight / 400f)
-
-            val shiftX = totalShiftX.roundToInt()
-            val shiftY = totalShiftY.roundToInt()
-
-            // Accumulate pixels based on art style specific fusion strategy
-            when (artStyle) {
-                OrbitArtStyle.IN_THE_ROUND -> {
-                    accumulateInTheRound(
-                        tempPixels, accumR, accumG, accumB, accumWeight,
-                        outWidth, outHeight, weight, shiftX, shiftY, isReference, styleParams
-                    )
-                }
-                OrbitArtStyle.IMPRESSIONIST -> {
-                    accumulateImpressionist(
-                        tempPixels, accumR, accumG, accumB, accumWeight,
-                        outWidth, outHeight, weight, shiftX, shiftY, isReference, styleParams
-                    )
-                }
-                OrbitArtStyle.ARCHITECTURAL -> {
-                    accumulateArchitectural(
-                        tempPixels, accumR, accumG, accumB, accumWeight,
-                        outWidth, outHeight, weight, shiftX, shiftY, isReference, styleParams
-                    )
-                }
-                OrbitArtStyle.ETHEREAL -> {
-                    accumulateEthereal(
-                        tempPixels, accumR, accumG, accumB, accumWeight,
-                        outWidth, outHeight, weight, shiftX, shiftY, isReference, styleParams
-                    )
-                }
-                OrbitArtStyle.MOTION_FLOW -> {
-                    accumulateMotionFlow(
-                        tempPixels, accumR, accumG, accumB, accumWeight,
-                        outWidth, outHeight, weight, shiftX, shiftY, isReference, styleParams
-                    )
-                }
-                OrbitArtStyle.URBAN_LAYERS -> {
-                    accumulateUrbanLayers(
-                        tempPixels, accumR, accumG, accumB, accumWeight,
-                        outWidth, outHeight, weight, shiftX, shiftY, isReference, styleParams
-                    )
-                }
-            }
-
-            // If this is one of the chosen key perspective echo frames, capture its contour layer
-            if (i in echoIndices && !isReference && styleParams.echoStrength > 10f) {
-                accumulateEchoContours(
-                    tempPixels, echoAccumR, echoAccumG, echoAccumB, echoAccumWeight,
-                    outWidth, outHeight, shiftX, shiftY, styleParams
-                )
-            }
+            coroutineContext.ensureActive()
+            val resultBitmap = Bitmap.createBitmap(outWidth, outHeight, Bitmap.Config.ARGB_8888)
+            resultBitmap.setPixels(outputPixels, 0, outWidth, 0, 0, outWidth, outHeight)
+            resultBitmap
+        } catch (oom: OutOfMemoryError) {
+            System.gc()
+            oom.printStackTrace()
+            null
         }
-
-        onProgress(FusionProgress(totalImages, totalImages, "Prägnante Konturen & Leuchtkraft veredeln..."))
-
-        // Create base fused pixel array
-        val outputPixels = IntArray(outWidth * outHeight)
-        val echoWeightNormalized = (styleParams.echoStrength / 100f) * 0.45f
-
-        for (idx in outputPixels.indices) {
-            val w = accumWeight[idx]
-            var r = if (w > 0f) (accumR[idx] / w) else 0f
-            var g = if (w > 0f) (accumG[idx] / w) else 0f
-            var b = if (w > 0f) (accumB[idx] / w) else 0f
-
-            // Blend discrete perspective echoes into the composition
-            val ew = echoAccumWeight[idx]
-            if (ew > 0f && echoWeightNormalized > 0f) {
-                val er = echoAccumR[idx] / ew
-                val eg = echoAccumG[idx] / ew
-                val eb = echoAccumB[idx] / ew
-
-                // Overlay high-frequency perspective contours
-                r = (r * (1f - echoWeightNormalized) + er * echoWeightNormalized).coerceIn(0f, 255f)
-                g = (g * (1f - echoWeightNormalized) + eg * echoWeightNormalized).coerceIn(0f, 255f)
-                b = (b * (1f - echoWeightNormalized) + eb * echoWeightNormalized).coerceIn(0f, 255f)
-            }
-
-            outputPixels[idx] = (0xFF shl 24) or (r.roundToInt() shl 16) or (g.roundToInt() shl 8) or b.roundToInt()
-        }
-
-        // Apply advanced post-processing:
-        // 1. Background dissolve (radial depth falloff)
-        // 2. Vibrance & Color Intensity
-        // 3. Warmth tone shaping
-        // 4. Shadow Depth & micro-contrast
-        // 5. Light Glow / Highlight Bloom
-        // 6. Contour Embossing / Edge Emphasis
-        coroutineContext.ensureActive()
-        applyCreativePostProcessing(outputPixels, outWidth, outHeight, artStyle, styleParams)
-
-        coroutineContext.ensureActive()
-        val resultBitmap = Bitmap.createBitmap(outWidth, outHeight, Bitmap.Config.ARGB_8888)
-        resultBitmap.setPixels(outputPixels, 0, outWidth, 0, 0, outWidth, outHeight)
-        resultBitmap
     }
 
     private fun selectEchoIndices(total: Int, refIndex: Int, count: Int): Set<Int> {
@@ -229,6 +244,7 @@ object OrbitFusionEngine {
         total: Int,
         refIndex: Int,
         artStyle: OrbitArtStyle,
+        compositionStrategy: OrbitCompositionStrategy,
         params: OrbitStyleParameters
     ): FloatArray {
         val weights = FloatArray(total)
@@ -240,6 +256,22 @@ object OrbitFusionEngine {
             return weights
         }
 
+        if (compositionStrategy == OrbitCompositionStrategy.STRUCTURAL_FIELD) {
+            // STRUCTURAL FIELD (Flächenfeld, z. B. Wald, Blätterdach, Fassaden):
+            // Gleichberechtigte strukturelle Gewichtung über alle Blickwinkel ohne dominierenden Zentralanker.
+            // Erzeugt rhythmische Gewebeüberlagerung mit subtiler organischer Modulation.
+            val baseWeight = 1f / total
+            for (i in 0 until total) {
+                val harmonic = 1.0f + 0.18f * cos((i.toFloat() / total) * 6.0 * Math.PI).toFloat()
+                val dist = abs(i - refIndex).toFloat()
+                val localWave = 1.0f + (stabilityNorm * 0.35f) * cos((dist / total) * 2.0 * Math.PI).toFloat()
+                weights[i] = baseWeight * harmonic * localWave
+            }
+            normalize(weights)
+            return weights
+        }
+
+        // SUBJECT CENTERED (Motivzentriert, z. B. Solitärbaum, Skulptur):
         // Reference dominance: high stability anchors the subject; abstraction disperses
         val refBaseDominance = lerp(0.35f, 0.92f, stabilityNorm)
         val refDominance = lerp(refBaseDominance, 1f / total, abstractionNorm * 0.70f)
@@ -294,7 +326,7 @@ object OrbitFusionEngine {
         pixels: IntArray,
         accR: FloatArray, accG: FloatArray, accB: FloatArray, accW: FloatArray,
         w: Int, h: Int, weight: Float, shiftX: Int, shiftY: Int,
-        isReference: Boolean, params: OrbitStyleParameters
+        isReference: Boolean, compositionStrategy: OrbitCompositionStrategy, params: OrbitStyleParameters
     ) {
         val centerX = w / 2f
         val centerY = h / 2f
@@ -302,6 +334,7 @@ object OrbitFusionEngine {
         val stability = (params.subjectStability / 100f)
         val dissolveStrength = (params.backgroundDissolve / 100f)
         val colorDensityMod = 1.0f + (params.colorDensity / 100f) * 0.45f
+        val isStructural = (compositionStrategy == OrbitCompositionStrategy.STRUCTURAL_FIELD)
 
         for (y in 0 until h) {
             val srcY = y - shiftY
@@ -313,15 +346,18 @@ object OrbitFusionEngine {
                 val srcIdx = srcY * w + srcX
                 val destIdx = y * w + x
 
-                // Radial distance from motif center
-                val dist = hypot(x - centerX, y - centerY)
-                val normRadius = (dist / maxRadius).coerceIn(0f, 1f)
-
-                // Central motif stays anchored by reference; background perspectives dissolve
-                val spatialWeight = if (isReference) {
-                    weight * (1.2f + stability * (1f - normRadius) * 2.8f)
+                val spatialWeight = if (isStructural) {
+                    // Structural field uses uniform spatial weighting across the scene
+                    weight * (1.0f + (if (isReference) stability * 0.4f else 0f))
                 } else {
-                    weight * (0.8f + (1f - stability + dissolveStrength * 0.5f) * normRadius)
+                    // Radial distance from motif center
+                    val dist = hypot(x - centerX, y - centerY)
+                    val normRadius = (dist / maxRadius).coerceIn(0f, 1f)
+                    if (isReference) {
+                        weight * (1.2f + stability * (1f - normRadius) * 2.8f)
+                    } else {
+                        weight * (0.8f + (1f - stability + dissolveStrength * 0.5f) * normRadius)
+                    }
                 }
 
                 val color = pixels[srcIdx]
@@ -552,23 +588,31 @@ object OrbitFusionEngine {
         }
     }
 
-    // --- Comprehensive Creative Engine V0.3 Post-Processing ---
+    // --- Comprehensive Creative Engine V0.8 Post-Processing ---
 
     private fun applyCreativePostProcessing(
         pixels: IntArray,
         w: Int,
         h: Int,
         artStyle: OrbitArtStyle,
+        compositionStrategy: OrbitCompositionStrategy,
         params: OrbitStyleParameters
     ) {
         val centerX = w / 2f
         val centerY = h / 2f
         val maxRadius = hypot(centerX, centerY)
 
-        // 1. Color Intensity / Vibrance & Warmth (Prevent flat/gray multi-exposures!)
-        val vibranceBoost = (params.colorIntensity / 100f) * 1.4f
-        val warmFactor = (params.warmth - 50f) / 100f // -0.5 .. +0.5
-        val shadowDepthMod = (params.shadowDepth / 100f) * 0.45f
+        // 1. Color Processing:
+        // - Vibrance (0..100): Boosts unsaturated colors without clipping already vibrant tones
+        // - Color Intensity (0..100): Richness / saturation scaling
+        // - Contrast (0..100): S-curve tone curve (50 neutral, >50 richer punch, <50 softer)
+        // - Warmth (-100..+100): Negative = cool/blue, 0 = neutral, Positive = warm/gold
+        // - Color Density (0..100): Prevents milky dilution in midtones
+        val vibranceFactor = (params.vibrance / 100f) * 1.5f
+        val intensityFactor = (params.colorIntensity / 50f) // 1.0 at 50, 2.0 at 100
+        val contrastFactor = (params.contrast - 50f) / 50f // -1.0 .. +1.0
+        val warmFactor = (params.warmth / 100f).coerceIn(-1f, 1f) // -1.0 cool .. 0 neutral .. +1.0 warm
+        val densityFactor = 1.0f + (params.colorDensity / 100f) * 0.40f
 
         for (i in pixels.indices) {
             val c = pixels[i]
@@ -576,44 +620,63 @@ object OrbitFusionEngine {
             var g = ((c shr 8) and 0xFF).toFloat()
             var b = (c and 0xFF).toFloat()
 
-            // Calculate saturation and boost lower saturated pixels more (Vibrance)
+            // Density: color substance against spectral wash
+            val mean = (r + g + b) / 3f
+            r = (mean + (r - mean) * densityFactor).coerceIn(0f, 255f)
+            g = (mean + (g - mean) * densityFactor).coerceIn(0f, 255f)
+            b = (mean + (b - mean) * densityFactor).coerceIn(0f, 255f)
+
+            // Calculate saturation and boost lower saturated pixels selectively (Vibrance)
             val maxC = max(r, max(g, b))
             val minC = min(r, min(g, b))
             val sat = if (maxC > 0f) (maxC - minC) / maxC else 0f
-            val satMultiplier = 1.0f + (1.0f - sat) * vibranceBoost
+            val vibranceMultiplier = 1.0f + (1.0f - sat) * vibranceFactor
+            val totalSatMultiplier = vibranceMultiplier * intensityFactor
 
             val lum = 0.299f * r + 0.587f * g + 0.114f * b
-            r = (lum + (r - lum) * satMultiplier).coerceIn(0f, 255f)
-            g = (lum + (g - lum) * satMultiplier).coerceIn(0f, 255f)
-            b = (lum + (b - lum) * satMultiplier).coerceIn(0f, 255f)
+            r = (lum + (r - lum) * totalSatMultiplier).coerceIn(0f, 255f)
+            g = (lum + (g - lum) * totalSatMultiplier).coerceIn(0f, 255f)
+            b = (lum + (b - lum) * totalSatMultiplier).coerceIn(0f, 255f)
 
-            // Warmth shift: subtle golden hour amber glow
-            if (warmFactor != 0f) {
-                r = (r * (1f + warmFactor * 0.24f)).coerceIn(0f, 255f)
-                b = (b * (1f - warmFactor * 0.22f)).coerceIn(0f, 255f)
+            // Warmth shift (-100 cool/blue .. +100 warm/amber gold)
+            if (warmFactor > 0f) {
+                r = (r * (1f + warmFactor * 0.28f)).coerceIn(0f, 255f)
+                g = (g * (1f + warmFactor * 0.08f)).coerceIn(0f, 255f)
+                b = (b * (1f - warmFactor * 0.25f)).coerceIn(0f, 255f)
+            } else if (warmFactor < 0f) {
+                val cool = -warmFactor
+                r = (r * (1f - cool * 0.22f)).coerceIn(0f, 255f)
+                b = (b * (1f + cool * 0.26f)).coerceIn(0f, 255f)
             }
 
-            // Shadow Depth: S-curve to anchor blacks and prevent washed-out milky gray tones
-            if (shadowDepthMod > 0f) {
-                val normLum = lum / 255f
+            // Contrast (S-Curve tonality preserving shadow and highlight anchors)
+            if (contrastFactor != 0f) {
+                val normLum = (0.299f * r + 0.587f * g + 0.114f * b) / 255f
                 val sCurve = (normLum * normLum * (3f - 2f * normLum))
-                val curveFactor = lerp(1f, sCurve / max(0.01f, normLum), shadowDepthMod)
-                r = (r * curveFactor).coerceIn(0f, 255f)
-                g = (g * curveFactor).coerceIn(0f, 255f)
-                b = (b * curveFactor).coerceIn(0f, 255f)
+                val targetLum = if (contrastFactor > 0f) {
+                    lerp(normLum, sCurve, contrastFactor)
+                } else {
+                    lerp(normLum, (normLum + 0.5f) / 2f, -contrastFactor * 0.5f)
+                }
+                val lumScale = if (normLum > 0.01f) (targetLum / normLum) else 1f
+                r = (r * lumScale).coerceIn(0f, 255f)
+                g = (g * lumScale).coerceIn(0f, 255f)
+                b = (b * lumScale).coerceIn(0f, 255f)
             }
 
             pixels[i] = (0xFF shl 24) or (r.roundToInt() shl 16) or (g.roundToInt() shl 8) or b.roundToInt()
         }
 
-        // 2. Background Dissolve & Radial Softness
-        if (params.backgroundDissolve > 20f || params.softness > 20f) {
-            applyBackgroundDissolveAndGlow(pixels, w, h, centerX, centerY, maxRadius, params)
+        // 2. Background Dissolve & Softness:
+        // - SUBJECT_CENTERED: Radial falloff from central motif
+        // - STRUCTURAL_FIELD: Uniform atmospheric spatial diffusion across the field
+        if (params.backgroundDissolve > 15f || params.softness > 20f) {
+            applyBackgroundDissolveAndGlow(pixels, w, h, centerX, centerY, maxRadius, compositionStrategy, params)
         }
 
-        // 3. Konturprägung / Edge Emphasis (Sharp, musical perspective lines)
-        if (params.edgeEmphasis > 25f) {
-            applyEdgeEmphasis(pixels, w, h, (params.edgeEmphasis - 20f) / 80f)
+        // 3. Konturprägung / Edge Emphasis (High-frequency unsharp line embossing without shifting layers)
+        if (params.edgeEmphasis > 20f) {
+            applyEdgeEmphasis(pixels, w, h, (params.edgeEmphasis - 15f) / 85f)
         }
     }
 
@@ -624,6 +687,7 @@ object OrbitFusionEngine {
         cx: Float,
         cy: Float,
         maxRadius: Float,
+        compositionStrategy: OrbitCompositionStrategy,
         params: OrbitStyleParameters
     ) {
         val copy = pixels.clone()
@@ -631,16 +695,22 @@ object OrbitFusionEngine {
         val stability = (params.subjectStability / 100f)
         val coreRadius = maxRadius * 0.32f * (stability + 0.3f)
         val glowStrength = (params.lightGlow / 100f) * 0.4f
+        val isStructural = (compositionStrategy == OrbitCompositionStrategy.STRUCTURAL_FIELD)
 
         for (y in 1 until h - 1) {
             val yOffset = y * w
             for (x in 1 until w - 1) {
                 val idx = yOffset + x
 
-                val dist = hypot(x - cx, y - cy)
-                val dissolveFactor = if (dist > coreRadius) {
-                    ((dist - coreRadius) / (maxRadius - coreRadius)).coerceIn(0f, 1f) * dissolveStrength
-                } else 0f
+                val dissolveFactor = if (isStructural) {
+                    // Uniform subtle atmospheric diffusion across entire field without artificial center circle
+                    dissolveStrength * 0.65f
+                } else {
+                    val dist = hypot(x - cx, y - cy)
+                    if (dist > coreRadius) {
+                        ((dist - coreRadius) / (maxRadius - coreRadius)).coerceIn(0f, 1f) * dissolveStrength
+                    } else 0f
+                }
 
                 val cCenter = copy[idx]
                 val cUp = copy[idx - w]

@@ -11,8 +11,10 @@ import com.example.engine.BitmapUtils
 import com.example.model.OrbitArtStyle
 import com.example.model.OrbitBlendMode
 import com.example.model.OrbitCaptureMode
+import com.example.model.OrbitCompositionStrategy
 import com.example.model.OrbitProject
 import com.example.model.OrbitStyleParameters
+import com.example.model.OrbitWorkspaceMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -77,6 +79,8 @@ class OrbitProjectRepository(private val context: Context) {
                         abstraction = paramsObj.optDouble("abstraction", obj.optDouble("abstractionLevel", def.abstraction.toDouble())).toFloat(),
                         subjectStability = paramsObj.optDouble("subjectStability", def.subjectStability.toDouble()).toFloat(),
                         colorIntensity = paramsObj.optDouble("colorIntensity", def.colorIntensity.toDouble()).toFloat(),
+                        vibrance = paramsObj.optDouble("vibrance", def.vibrance.toDouble()).toFloat(),
+                        contrast = paramsObj.optDouble("contrast", def.contrast.toDouble()).toFloat(),
                         edgeEmphasis = paramsObj.optDouble("edgeEmphasis", def.edgeEmphasis.toDouble()).toFloat(),
                         backgroundDissolve = paramsObj.optDouble("backgroundDissolve", def.backgroundDissolve.toDouble()).toFloat(),
                         echoStrength = paramsObj.optDouble("echoStrength", def.echoStrength.toDouble()).toFloat(),
@@ -125,7 +129,17 @@ class OrbitProjectRepository(private val context: Context) {
                     ghostOverlayAlpha = obj.optDouble("ghostOverlayAlpha", 0.45).toFloat(),
                     ghostReferenceMode = obj.optString("ghostReferenceMode", "PREVIOUS"),
                     isIntervalMode = obj.optBoolean("isIntervalMode", false),
-                    intervalSeconds = obj.optInt("intervalSeconds", 3)
+                    intervalSeconds = obj.optInt("intervalSeconds", 3),
+                    compositionStrategy = try {
+                        OrbitCompositionStrategy.valueOf(obj.optString("compositionStrategy", OrbitCompositionStrategy.SUBJECT_CENTERED.name))
+                    } catch (e: Exception) {
+                        OrbitCompositionStrategy.SUBJECT_CENTERED
+                    },
+                    workspaceMode = try {
+                        OrbitWorkspaceMode.valueOf(obj.optString("workspaceMode", OrbitWorkspaceMode.SIMPLE.name))
+                    } catch (e: Exception) {
+                        OrbitWorkspaceMode.SIMPLE
+                    }
                 )
                 list.add(project)
             }
@@ -159,6 +173,8 @@ class OrbitProjectRepository(private val context: Context) {
                         put("abstraction", p.styleParams.abstraction.toDouble())
                         put("subjectStability", p.styleParams.subjectStability.toDouble())
                         put("colorIntensity", p.styleParams.colorIntensity.toDouble())
+                        put("vibrance", p.styleParams.vibrance.toDouble())
+                        put("contrast", p.styleParams.contrast.toDouble())
                         put("edgeEmphasis", p.styleParams.edgeEmphasis.toDouble())
                         put("backgroundDissolve", p.styleParams.backgroundDissolve.toDouble())
                         put("echoStrength", p.styleParams.echoStrength.toDouble())
@@ -182,6 +198,8 @@ class OrbitProjectRepository(private val context: Context) {
                     put("ghostReferenceMode", p.ghostReferenceMode)
                     put("isIntervalMode", p.isIntervalMode)
                     put("intervalSeconds", p.intervalSeconds)
+                    put("compositionStrategy", p.compositionStrategy.name)
+                    put("workspaceMode", p.workspaceMode.name)
                 }
                 array.put(obj)
             }

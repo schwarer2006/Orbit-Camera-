@@ -2,6 +2,7 @@ package com.example.engine
 
 import android.content.ContentValues
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
@@ -17,6 +18,7 @@ import java.io.FileOutputStream
 import java.io.InputStream
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 object BitmapUtils {
 
@@ -168,6 +170,54 @@ object BitmapUtils {
             e.printStackTrace()
             resolver.delete(uri, null, null)
             return null
+        }
+    }
+
+    /**
+     * Center-crops and scales source bitmap to exactly targetWidth x targetHeight
+     * without image distortion (aspect-fill). Recycles source bitmap if a new bitmap is created.
+     */
+    fun cropCenterFit(source: Bitmap, targetW: Int, targetH: Int): Bitmap {
+        if (source.width == targetW && source.height == targetH) return source
+
+        val scale = max(targetW.toFloat() / source.width, targetH.toFloat() / source.height)
+        val scaledW = (source.width * scale).roundToInt()
+        val scaledH = (source.height * scale).roundToInt()
+
+        val result = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(result)
+        val dx = (targetW - scaledW) / 2f
+        val dy = (targetH - scaledH) / 2f
+        val matrix = Matrix().apply {
+            postScale(scale, scale)
+            postTranslate(dx, dy)
+        }
+        val paint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
+        canvas.drawBitmap(source, matrix, paint)
+        if (source != result) {
+            source.recycle()
+        }
+        return result
+    }
+
+    /**
+     * Launch the system Android Sharesheet with the given image URI.
+     */
+    fun shareImage(context: Context, uri: Uri, title: String = "ORBIT Kunstwerk") {
+        try {
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "image/jpeg"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, title)
+                putExtra(Intent.EXTRA_TEXT, "Erstellt mit ORBIT Camera – Computational Art Photography")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            val chooser = Intent.createChooser(shareIntent, "ORBIT Kunstwerk teilen").apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(chooser)
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 }

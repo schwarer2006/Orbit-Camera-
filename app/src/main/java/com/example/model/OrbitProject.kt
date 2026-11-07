@@ -66,7 +66,10 @@ data class OrbitProject(
     val ghostOverlayAlpha: Float = 0.45f,
     val ghostReferenceMode: String = "PREVIOUS", // "PREVIOUS" oder "FIRST"
     val isIntervalMode: Boolean = false,
-    val intervalSeconds: Int = 3 // 2, 3, 5, 10
+    val intervalSeconds: Int = 3, // 2, 3, 5, 10
+    // V0.8 Creative Engine fields
+    val compositionStrategy: OrbitCompositionStrategy = OrbitCompositionStrategy.SUBJECT_CENTERED,
+    val workspaceMode: OrbitWorkspaceMode = OrbitWorkspaceMode.SIMPLE
 ) {
     val actualCount: Int
         get() = imagePaths.size
