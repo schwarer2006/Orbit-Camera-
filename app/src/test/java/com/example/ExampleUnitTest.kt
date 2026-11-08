@@ -100,9 +100,9 @@ class ExampleUnitTest {
 
         // V0.9.0 Selective subject weighting (mask)
         assertFalse(project.maskEnabled)
-        assertEquals(45f, project.maskRadius, 0.001f)
-        assertEquals(30f, project.maskFeather, 0.001f)
-        assertEquals(60f, project.maskIntensity, 0.001f)
+        assertEquals(0.35f, project.maskRadius, 0.001f)
+        assertEquals(0.25f, project.maskFeather, 0.001f)
+        assertEquals(0.70f, project.maskIntensity, 0.001f)
     }
 
     @Test
