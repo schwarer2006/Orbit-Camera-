@@ -8,6 +8,7 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.net.Uri
 import com.example.engine.BitmapUtils
+import com.example.engine.OrbitPreviewCache
 import com.example.model.OrbitArtStyle
 import com.example.model.OrbitBlendMode
 import com.example.model.OrbitCaptureMode
@@ -338,6 +339,7 @@ class OrbitProjectRepository(private val context: Context) {
     }
 
     fun deleteProject(projectId: String): Boolean {
+        OrbitPreviewCache.evictProject(projectId)
         val current = _projects.value.toMutableList()
         val removed = current.removeAll { it.id == projectId }
         if (removed) {

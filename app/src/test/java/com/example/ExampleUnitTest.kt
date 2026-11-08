@@ -141,4 +141,62 @@ class ExampleUnitTest {
         assertEquals(1, report.lowConfidenceCount)
         assertEquals(0.68f, report.averageConfidence, 0.01f)
     }
+
+    @Test
+    fun orbitPreviewCache_storesRetrievesAndClears_accurately() {
+        com.example.engine.OrbitPreviewCache.clear()
+        val dummyPixels = IntArray(100) { it }
+
+        // Store in cache
+        com.example.engine.OrbitPreviewCache.put("proj-A", "/path/to/img1.jpg", 10, 10, dummyPixels)
+
+        val retrieved = com.example.engine.OrbitPreviewCache.get("proj-A", "/path/to/img1.jpg", 10, 10)
+        assertNotNull(retrieved)
+        assertEquals(100, retrieved!!.size)
+        assertEquals(42, retrieved[42])
+
+        // Cache miss on different dimension or different project
+        assertNull(com.example.engine.OrbitPreviewCache.get("proj-A", "/path/to/img1.jpg", 20, 20))
+        assertNull(com.example.engine.OrbitPreviewCache.get("proj-B", "/path/to/img1.jpg", 10, 10))
+
+        // Evict project
+        com.example.engine.OrbitPreviewCache.evictProject("proj-A")
+        assertNull(com.example.engine.OrbitPreviewCache.get("proj-A", "/path/to/img1.jpg", 10, 10))
+    }
+
+    @Test
+    fun orbitPerformanceTracker_recordsAndComputesMetrics_correctly() {
+        com.example.engine.OrbitPerformanceTracker.reset()
+
+        com.example.engine.OrbitPerformanceTracker.recordJobStarted()
+        com.example.engine.OrbitPerformanceTracker.recordJobStarted()
+        com.example.engine.OrbitPerformanceTracker.recordJobCanceled()
+
+        com.example.engine.OrbitPerformanceTracker.recordRender(150L)
+        com.example.engine.OrbitPerformanceTracker.recordCapture(45L)
+        com.example.engine.OrbitPerformanceTracker.recordThumbnail(12L)
+        com.example.engine.OrbitPerformanceTracker.recordRegistration(320L)
+        com.example.engine.OrbitPerformanceTracker.recordExport(1200L)
+
+        com.example.engine.OrbitPerformanceTracker.recordCacheHit()
+        com.example.engine.OrbitPerformanceTracker.recordCacheHit()
+        com.example.engine.OrbitPerformanceTracker.recordCacheHit()
+        com.example.engine.OrbitPerformanceTracker.recordCacheMiss()
+
+        val snap = com.example.engine.OrbitPerformanceTracker.getSnapshot()
+        assertEquals(150L, snap.lastRenderMs)
+        assertEquals(45L, snap.lastCaptureMs)
+        assertEquals(12L, snap.lastThumbnailMs)
+        assertEquals(320L, snap.lastRegistrationMs)
+        assertEquals(1200L, snap.lastExportMs)
+
+        assertEquals(2, snap.jobsStarted)
+        assertEquals(1, snap.jobsCanceled)
+
+        assertEquals(3, snap.cacheHits)
+        assertEquals(1, snap.cacheMisses)
+        assertEquals(75, snap.cacheHitRatePercent) // 3 out of 4 = 75%
+        assertTrue(snap.usedHeapMb >= 0)
+        assertTrue(snap.maxHeapMb > 0)
+    }
 }

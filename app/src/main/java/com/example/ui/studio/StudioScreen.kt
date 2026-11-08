@@ -6,6 +6,7 @@ import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -56,6 +57,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Undo
@@ -78,6 +80,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -151,6 +154,21 @@ fun StudioScreen(
         }
     }
 
+    // Performance & Battery optimization: Pause background studio rendering when app is backgrounded or screen disposed
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_PAUSE || event == androidx.lifecycle.Lifecycle.Event.ON_STOP) {
+                viewModel.pauseStudioRendering()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            viewModel.pauseStudioRendering()
+        }
+    }
+
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         containerColor = SlateDark950,
@@ -200,6 +218,20 @@ fun StudioScreen(
                 }
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Performance & Akku-Diagnostik Toggle Button
+                    IconButton(
+                        onClick = { viewModel.toggleDiagnostics() },
+                        modifier = Modifier
+                            .background(if (uiState.isDiagnosticsVisible) CyanAccent.copy(alpha = 0.25f) else SlateDark800, CircleShape)
+                            .testTag("btn_diagnostics_toggle")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Speed,
+                            contentDescription = "Performance & Akku-Diagnose",
+                            tint = if (uiState.isDiagnosticsVisible) CyanNeon else SlateLight100
+                        )
+                    }
+
                     // About Dialog Button
                     IconButton(
                         onClick = { viewModel.openAboutDialog() },
@@ -242,6 +274,89 @@ fun StudioScreen(
                             contentDescription = "Neu berechnen",
                             tint = if (uiState.isRendering) SlateDark600 else CyanAccent
                         )
+                    }
+                }
+            }
+
+            // Optional Performance & Battery Diagnostics Display
+            AnimatedVisibility(
+                visible = uiState.isDiagnosticsVisible,
+                enter = fadeIn(),
+                exit = fadeOut()
+            ) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                        .testTag("card_performance_diagnostics"),
+                    colors = CardDefaults.cardColors(containerColor = SlateDark900),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, CyanAccent.copy(alpha = 0.4f))
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.Speed,
+                                    contentDescription = null,
+                                    tint = CyanNeon,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "ORBIT Performance & Akku-Diagnose",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = CyanAccent
+                                )
+                            }
+                            Text(
+                                text = "Lokal / On-Device",
+                                fontSize = 10.sp,
+                                color = SlateLight100.copy(alpha = 0.6f)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        val diag = uiState.diagnostics
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column {
+                                Text("Vorschau-Dauer", fontSize = 10.sp, color = SlateLight100.copy(alpha = 0.7f))
+                                Text("${diag.lastRenderMs} ms", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = SlateWhite)
+                            }
+                            Column {
+                                Text("Preview LRU Cache", fontSize = 10.sp, color = SlateLight100.copy(alpha = 0.7f))
+                                Text("${diag.cacheHitRatePercent}% (${diag.cacheHits} Hits)", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = SlateWhite)
+                            }
+                            Column {
+                                Text("Heap RAM", fontSize = 10.sp, color = SlateLight100.copy(alpha = 0.7f))
+                                Text("${diag.usedHeapMb} / ${diag.maxHeapMb} MB", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = SlateWhite)
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column {
+                                Text("Render-Jobs", fontSize = 10.sp, color = SlateLight100.copy(alpha = 0.7f))
+                                Text("${diag.jobsStarted} gestartet · ${diag.jobsCanceled} abgebr.", fontSize = 11.sp, color = SlateLight100)
+                            }
+                            Column {
+                                Text("Aufnahme / Registrierung", fontSize = 10.sp, color = SlateLight100.copy(alpha = 0.7f))
+                                Text("${diag.lastCaptureMs} ms · ${diag.lastRegistrationMs} ms", fontSize = 11.sp, color = SlateLight100)
+                            }
+                        }
                     }
                 }
             }

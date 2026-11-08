@@ -10,6 +10,8 @@ import com.example.engine.BitmapUtils
 import com.example.engine.FusionProgress
 import com.example.engine.ImageQualityReport
 import com.example.engine.OrbitFusionEngine
+import com.example.engine.OrbitPerformanceTracker
+import com.example.engine.OrbitPreviewCache
 import com.example.engine.RegistrationReport
 import com.example.model.OrbitArtStyle
 import com.example.model.OrbitBlendMode
@@ -72,11 +74,36 @@ data class StudioUiState(
     val exportProgress: FusionProgress? = null,
     val selectedExportSize: OrbitExportSize = OrbitExportSize.HIGH_2048,
     val selectedExportRatio: OrbitExportRatio = OrbitExportRatio.SQUARE_1_1,
-    val selectedExportQuality: Int = 95
+    val selectedExportQuality: Int = 95,
+
+    // Performance & Diagnostics
+    val diagnostics: OrbitPerformanceTracker.DiagnosticsSnapshot = OrbitPerformanceTracker.getSnapshot(),
+    val isDiagnosticsVisible: Boolean = false
 ) {
     val abstractionLevel: Float
         get() = styleParameters.abstraction
 }
+
+private data class RenderKey(
+    val projectId: String,
+    val refIndex: Int,
+    val artStyle: OrbitArtStyle,
+    val strategy: OrbitCompositionStrategy,
+    val params: OrbitStyleParameters,
+    val shifts: Map<Int, Pair<Float, Float>>,
+    val offsetX: Float,
+    val offsetY: Float,
+    val blendMode: OrbitBlendMode,
+    val anchorX: Float,
+    val anchorY: Float,
+    val spreadEnabled: Boolean,
+    val disabledPaths: Set<String>,
+    val maskEnabled: Boolean,
+    val maskRadius: Float,
+    val maskFeather: Float,
+    val maskIntensity: Float,
+    val imageCount: Int
+)
 
 sealed class StudioEffect {
     data class ExportSuccess(val uri: Uri, val message: String) : StudioEffect()
@@ -98,6 +125,7 @@ class StudioViewModel(
     private var debounceRenderJob: Job? = null
     private var renderGeneration: Long = 0L
     private val previewDimension: Int = 720
+    private var lastRenderKey: RenderKey? = null
 
     private var undoStyleParameters: OrbitStyleParameters? = null
     private var undoCompositionStrategy: OrbitCompositionStrategy? = null
@@ -150,6 +178,7 @@ class StudioViewModel(
             exportedUri = null
         )
 
+        lastRenderKey = null
         loadReferenceBitmap(project, refIndex)
         analyzeProjectQuality(project)
         scheduleDebouncedFusion(delayMs = 0L)
@@ -518,7 +547,10 @@ class StudioViewModel(
     }
 
     private fun scheduleDebouncedFusion(delayMs: Long = 280L) {
-        debounceRenderJob?.cancel()
+        if (debounceRenderJob?.isActive == true) {
+            debounceRenderJob?.cancel()
+            OrbitPerformanceTracker.recordJobCanceled()
+        }
         debounceRenderJob = viewModelScope.launch {
             if (delayMs > 0) {
                 delay(delayMs)
@@ -528,7 +560,34 @@ class StudioViewModel(
             val project = state.activeProject ?: return@launch
             if (project.imagePaths.isEmpty()) return@launch
 
+            val currentKey = RenderKey(
+                projectId = project.id,
+                refIndex = state.selectedRefIndex,
+                artStyle = state.selectedArtStyle,
+                strategy = state.compositionStrategy,
+                params = state.styleParameters,
+                shifts = state.individualShifts,
+                offsetX = state.offsetX,
+                offsetY = state.offsetY,
+                blendMode = state.blendMode,
+                anchorX = state.anchorX,
+                anchorY = state.anchorY,
+                spreadEnabled = state.artisticSpreadEnabled,
+                disabledPaths = state.disabledImagePaths,
+                maskEnabled = state.maskEnabled,
+                maskRadius = state.maskRadius,
+                maskFeather = state.maskFeather,
+                maskIntensity = state.maskIntensity,
+                imageCount = project.activeCount
+            )
+
+            // Redundant calculation avoidance: Skip if parameters haven't changed and a render already exists
+            if (currentKey == lastRenderKey && _uiState.value.renderedBitmap != null) {
+                return@launch
+            }
+
             val thisGen = ++renderGeneration
+            OrbitPerformanceTracker.recordJobStarted()
 
             _uiState.value = _uiState.value.copy(
                 isRendering = true,
@@ -577,6 +636,7 @@ class StudioViewModel(
                     maskRadius = state.maskRadius,
                     maskFeather = state.maskFeather,
                     maskIntensity = state.maskIntensity,
+                    projectId = project.id,
                     onProgress = { progress ->
                         if (thisGen == renderGeneration) {
                             _uiState.value = _uiState.value.copy(renderProgress = progress)
@@ -586,6 +646,7 @@ class StudioViewModel(
 
                 if (thisGen == renderGeneration) {
                     if (result != null) {
+                        lastRenderKey = currentKey
                         val previewFile = File(getApplication<Application>().cacheDir, "preview_${project.id}.jpg")
                         BitmapUtils.saveBitmapToFile(result, previewFile, quality = 90)
                         repository.updateProject(updatedProject.copy(lastRenderedPath = previewFile.absolutePath))
@@ -595,7 +656,8 @@ class StudioViewModel(
                         renderedBitmap = result,
                         isRendering = false,
                         renderProgress = null,
-                        activeProject = updatedProject
+                        activeProject = updatedProject,
+                        diagnostics = OrbitPerformanceTracker.getSnapshot()
                     )
                 }
             } catch (ce: CancellationException) {
@@ -611,6 +673,21 @@ class StudioViewModel(
                 }
             }
         }
+    }
+
+    fun toggleDiagnostics() {
+        _uiState.value = _uiState.value.copy(
+            isDiagnosticsVisible = !_uiState.value.isDiagnosticsVisible,
+            diagnostics = OrbitPerformanceTracker.getSnapshot()
+        )
+    }
+
+    fun pauseStudioRendering() {
+        if (debounceRenderJob?.isActive == true) {
+            debounceRenderJob?.cancel()
+            OrbitPerformanceTracker.recordJobCanceled()
+        }
+        _uiState.value = _uiState.value.copy(isRendering = false, renderProgress = null)
     }
 
     fun openExportDialog() {
@@ -675,6 +752,7 @@ class StudioViewModel(
             )
 
             try {
+                val exportStartTime = System.currentTimeMillis()
                 // Re-compute freshly from original raw images and current style parameters!
                 val exportBitmap = OrbitFusionEngine.renderFusion(
                     imagePaths = project.imagePaths,
@@ -696,12 +774,14 @@ class StudioViewModel(
                     maskRadius = state.maskRadius,
                     maskFeather = state.maskFeather,
                     maskIntensity = state.maskIntensity,
+                    projectId = null, // Ensure export never uses downsampled preview cache
                     onProgress = { progress ->
                         _uiState.value = _uiState.value.copy(exportProgress = progress)
                     }
                 )
 
                 if (exportBitmap != null) {
+                    OrbitPerformanceTracker.recordExport(System.currentTimeMillis() - exportStartTime)
                     val title = "ORBIT_${project.name.replace(" ", "_")}_${artStyle.name}_${targetW}x${targetH}"
                     val uri = BitmapUtils.exportToMediaStore(
                         context = getApplication(),

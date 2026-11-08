@@ -74,8 +74,10 @@ object OrbitFusionEngine {
         maskRadius: Float = 45f,
         maskFeather: Float = 30f,
         maskIntensity: Float = 60f,
+        projectId: String? = null,
         onProgress: (FusionProgress) -> Unit = {}
     ): Bitmap? = withContext(Dispatchers.Default) {
+        val renderStartTime = System.currentTimeMillis()
         val validPaths = imagePaths.filter { File(it).exists() && it !in disabledImagePaths }
         if (validPaths.isEmpty()) return@withContext null
 
@@ -91,6 +93,7 @@ object OrbitFusionEngine {
 
         val outWidth = targetWidth
         val outHeight = targetHeight
+        val isPreview = (outWidth <= 1080 && outHeight <= 1080 && projectId != null)
 
         return@withContext try {
             val accumR = FloatArray(outWidth * outHeight)
@@ -118,13 +121,27 @@ object OrbitFusionEngine {
 
                 onProgress(FusionProgress(i + 1, totalImages, "${artStyle.title}: Überlagere Perspektive ${i + 1}/$totalImages..."))
 
-                // Decode single image sampled to requested dimensions
-                val sourceBitmap = BitmapUtils.decodeSampledBitmap(path, outWidth, outHeight) ?: continue
+                // Check preview LRU cache first to avoid repeated disk reads and JPEG decodes during slider adjustments
+                val cachedPixels = if (isPreview && projectId != null) {
+                    OrbitPreviewCache.get(projectId, path, outWidth, outHeight)
+                } else null
 
-                // Center-fit crop to exact aspect ratio (1:1, 4:5, 16:9) without distortion
-                val fittedBitmap = BitmapUtils.cropCenterFit(sourceBitmap, outWidth, outHeight)
-                fittedBitmap.getPixels(tempPixels, 0, outWidth, 0, 0, outWidth, outHeight)
-                fittedBitmap.recycle()
+                if (cachedPixels != null) {
+                    OrbitPerformanceTracker.recordCacheHit()
+                    System.arraycopy(cachedPixels, 0, tempPixels, 0, tempPixels.size)
+                } else {
+                    if (isPreview) OrbitPerformanceTracker.recordCacheMiss()
+                    // Decode single image sampled to requested dimensions
+                    val sourceBitmap = BitmapUtils.decodeSampledBitmap(path, outWidth, outHeight) ?: continue
+                    val fittedBitmap = BitmapUtils.cropCenterFit(sourceBitmap, outWidth, outHeight)
+                    fittedBitmap.getPixels(tempPixels, 0, outWidth, 0, 0, outWidth, outHeight)
+                    fittedBitmap.recycle()
+
+                    // Store fitted preview pixels in bounded cache
+                    if (isPreview && projectId != null) {
+                        OrbitPreviewCache.put(projectId, path, outWidth, outHeight, tempPixels.clone())
+                    }
+                }
 
                 // Calculate shift: combine global offset, individual shift, and perspective spread
                 val isReference = (i == safeRefIndex)
@@ -282,6 +299,8 @@ object OrbitFusionEngine {
             coroutineContext.ensureActive()
             val resultBitmap = Bitmap.createBitmap(outWidth, outHeight, Bitmap.Config.ARGB_8888)
             resultBitmap.setPixels(outputPixels, 0, outWidth, 0, 0, outWidth, outHeight)
+            val renderDuration = System.currentTimeMillis() - renderStartTime
+            OrbitPerformanceTracker.recordRender(renderDuration)
             resultBitmap
         } catch (oom: OutOfMemoryError) {
             System.gc()
@@ -420,36 +439,61 @@ object OrbitFusionEngine {
         anchorX: Float = 0.5f, anchorY: Float = 0.5f,
         maskEnabled: Boolean = false, maskRadius: Float = 45f, maskFeather: Float = 30f, maskIntensity: Float = 60f
     ) {
-        val centerX = if (compositionStrategy == OrbitCompositionStrategy.SUBJECT_CENTERED) anchorX * w else w / 2f
-        val centerY = if (compositionStrategy == OrbitCompositionStrategy.SUBJECT_CENTERED) anchorY * h else h / 2f
-        val maxRadius = hypot(max(centerX, w - centerX), max(centerY, h - centerY))
+        val minY = max(0, shiftY)
+        val maxY = min(h, h + shiftY)
+        val minX = max(0, shiftX)
+        val maxX = min(w, w + shiftX)
+        if (minY >= maxY || minX >= maxX) return
+
         val stability = (params.subjectStability / 100f)
-        val dissolveStrength = (params.backgroundDissolve / 100f)
         val colorDensityMod = 1.0f + (params.colorDensity / 100f) * 0.45f
         val isStructural = (compositionStrategy == OrbitCompositionStrategy.STRUCTURAL_FIELD)
 
-        val rCore = (maskRadius / 100f) * min(w, h) * 0.5f
-        val rFeatherDist = (maskFeather / 100f) * rCore + 1f
-        val maskBoost = (maskIntensity / 50f)
+        if (isStructural) {
+            val spatialWeight = weight * (1.0f + (if (isReference) stability * 0.4f else 0f))
+            for (y in minY until maxY) {
+                val srcYOffset = (y - shiftY) * w
+                val yOffset = y * w
+                for (x in minX until maxX) {
+                    val srcIdx = srcYOffset + (x - shiftX)
+                    val destIdx = yOffset + x
 
-        for (y in 0 until h) {
-            val srcY = y - shiftY
-            if (srcY !in 0 until h) continue
-            val yOffset = y * w
-            val srcYOffset = srcY * w
+                    val color = pixels[srcIdx]
+                    var r = ((color shr 16) and 0xFF).toFloat()
+                    var g = ((color shr 8) and 0xFF).toFloat()
+                    var b = (color and 0xFF).toFloat()
 
-            for (x in 0 until w) {
-                val srcX = x - shiftX
-                if (srcX !in 0 until w) continue
+                    val mean = (r + g + b) / 3f
+                    r = (mean + (r - mean) * colorDensityMod).coerceIn(0f, 255f)
+                    g = (mean + (g - mean) * colorDensityMod).coerceIn(0f, 255f)
+                    b = (mean + (b - mean) * colorDensityMod).coerceIn(0f, 255f)
 
-                val srcIdx = srcYOffset + srcX
-                val destIdx = yOffset + x
+                    blendSample(blendMode, destIdx, r, g, b, spatialWeight, accR, accG, accB, accW)
+                }
+            }
+        } else {
+            val centerX = anchorX * w
+            val centerY = anchorY * h
+            val maxRadius = hypot(max(centerX, w - centerX), max(centerY, h - centerY))
+            val dissolveStrength = (params.backgroundDissolve / 100f)
+            val rCore = (maskRadius / 100f) * min(w, h) * 0.5f
+            val rFeatherDist = (maskFeather / 100f) * rCore + 1f
+            val maskBoost = (maskIntensity / 50f)
 
-                val spatialWeight = if (isStructural) {
-                    weight * (1.0f + (if (isReference) stability * 0.4f else 0f))
-                } else {
-                    val dist = hypot(x - centerX, y - centerY)
+            for (y in minY until maxY) {
+                val srcYOffset = (y - shiftY) * w
+                val yOffset = y * w
+                val dy = y - centerY
+                val dySq = dy * dy
+
+                for (x in minX until maxX) {
+                    val srcIdx = srcYOffset + (x - shiftX)
+                    val destIdx = yOffset + x
+
+                    val dx = x - centerX
+                    val dist = sqrt(dx * dx + dySq)
                     val normRadius = (dist / maxRadius).coerceIn(0f, 1f)
+
                     var baseW = if (isReference) {
                         weight * (1.2f + stability * (1f - normRadius) * 2.8f)
                     } else {
@@ -471,20 +515,19 @@ object OrbitFusionEngine {
                             baseW *= (1f - maskWeight * (maskBoost * 0.4f).coerceAtMost(0.8f))
                         }
                     }
-                    baseW
+
+                    val color = pixels[srcIdx]
+                    var r = ((color shr 16) and 0xFF).toFloat()
+                    var g = ((color shr 8) and 0xFF).toFloat()
+                    var b = (color and 0xFF).toFloat()
+
+                    val mean = (r + g + b) / 3f
+                    r = (mean + (r - mean) * colorDensityMod).coerceIn(0f, 255f)
+                    g = (mean + (g - mean) * colorDensityMod).coerceIn(0f, 255f)
+                    b = (mean + (b - mean) * colorDensityMod).coerceIn(0f, 255f)
+
+                    blendSample(blendMode, destIdx, r, g, b, baseW, accR, accG, accB, accW)
                 }
-
-                val color = pixels[srcIdx]
-                var r = ((color shr 16) and 0xFF).toFloat()
-                var g = ((color shr 8) and 0xFF).toFloat()
-                var b = (color and 0xFF).toFloat()
-
-                val mean = (r + g + b) / 3f
-                r = (mean + (r - mean) * colorDensityMod).coerceIn(0f, 255f)
-                g = (mean + (g - mean) * colorDensityMod).coerceIn(0f, 255f)
-                b = (mean + (b - mean) * colorDensityMod).coerceIn(0f, 255f)
-
-                blendSample(blendMode, destIdx, r, g, b, spatialWeight, accR, accG, accB, accW)
             }
         }
     }
@@ -496,18 +539,21 @@ object OrbitFusionEngine {
         isReference: Boolean, params: OrbitStyleParameters,
         blendMode: OrbitBlendMode
     ) {
+        val minY = max(0, shiftY)
+        val maxY = min(h, h + shiftY)
+        val minX = max(0, shiftX)
+        val maxX = min(w, w + shiftX)
+        if (minY >= maxY || minX >= maxX) return
+
         val colorDensityFactor = 1.0f + (params.colorDensity / 100f) * 0.4f
-        for (y in 0 until h) {
-            val srcY = y - shiftY
-            if (srcY !in 0 until h) continue
+        val effectiveWeight = if (isReference) weight * 1.35f else weight
+
+        for (y in minY until maxY) {
             val yOffset = y * w
-            val srcYOffset = srcY * w
+            val srcYOffset = (y - shiftY) * w
 
-            for (x in 0 until w) {
-                val srcX = x - shiftX
-                if (srcX !in 0 until w) continue
-
-                val srcIdx = srcYOffset + srcX
+            for (x in minX until maxX) {
+                val srcIdx = srcYOffset + (x - shiftX)
                 val destIdx = yOffset + x
 
                 val color = pixels[srcIdx]
@@ -520,7 +566,6 @@ object OrbitFusionEngine {
                 g = (mean + (g - mean) * colorDensityFactor).coerceIn(0f, 255f)
                 b = (mean + (b - mean) * colorDensityFactor).coerceIn(0f, 255f)
 
-                val effectiveWeight = if (isReference) weight * 1.35f else weight
                 blendSample(blendMode, destIdx, r, g, b, effectiveWeight, accR, accG, accB, accW)
             }
         }
@@ -533,18 +578,20 @@ object OrbitFusionEngine {
         isReference: Boolean, params: OrbitStyleParameters,
         blendMode: OrbitBlendMode
     ) {
+        val minY = max(0, shiftY)
+        val maxY = min(h, h + shiftY)
+        val minX = max(0, shiftX)
+        val maxX = min(w, w + shiftX)
+        if (minY >= maxY || minX >= maxX) return
+
         val edgeBoost = 1.0f + (params.edgeEmphasis / 100f) * 0.5f
-        for (y in 0 until h) {
-            val srcY = y - shiftY
-            if (srcY !in 0 until h) continue
+
+        for (y in minY until maxY) {
             val yOffset = y * w
-            val srcYOffset = srcY * w
+            val srcYOffset = (y - shiftY) * w
 
-            for (x in 0 until w) {
-                val srcX = x - shiftX
-                if (srcX !in 0 until w) continue
-
-                val srcIdx = srcYOffset + srcX
+            for (x in minX until maxX) {
+                val srcIdx = srcYOffset + (x - shiftX)
                 val destIdx = yOffset + x
 
                 val color = pixels[srcIdx]
@@ -571,18 +618,20 @@ object OrbitFusionEngine {
         isReference: Boolean, params: OrbitStyleParameters,
         blendMode: OrbitBlendMode
     ) {
+        val minY = max(0, shiftY)
+        val maxY = min(h, h + shiftY)
+        val minX = max(0, shiftX)
+        val maxX = min(w, w + shiftX)
+        if (minY >= maxY || minX >= maxX) return
+
         val highlightLift = 1.0f + (params.lightGlow / 100f) * 0.35f
-        for (y in 0 until h) {
-            val srcY = y - shiftY
-            if (srcY !in 0 until h) continue
+
+        for (y in minY until maxY) {
             val yOffset = y * w
-            val srcYOffset = srcY * w
+            val srcYOffset = (y - shiftY) * w
 
-            for (x in 0 until w) {
-                val srcX = x - shiftX
-                if (srcX !in 0 until w) continue
-
-                val srcIdx = srcYOffset + srcX
+            for (x in minX until maxX) {
+                val srcIdx = srcYOffset + (x - shiftX)
                 val destIdx = yOffset + x
 
                 val color = pixels[srcIdx]
@@ -602,18 +651,21 @@ object OrbitFusionEngine {
         isReference: Boolean, params: OrbitStyleParameters,
         blendMode: OrbitBlendMode
     ) {
+        val minY = max(0, shiftY)
+        val maxY = min(h, h + shiftY)
+        val minX = max(0, shiftX)
+        val maxX = min(w, w + shiftX)
+        if (minY >= maxY || minX >= maxX) return
+
         val motionMult = 1.0f + (params.motionStrength / 100f) * 0.4f
-        for (y in 0 until h) {
-            val srcY = y - shiftY
-            if (srcY !in 0 until h) continue
+        val effectiveWeight = weight * motionMult
+
+        for (y in minY until maxY) {
             val yOffset = y * w
-            val srcYOffset = srcY * w
+            val srcYOffset = (y - shiftY) * w
 
-            for (x in 0 until w) {
-                val srcX = x - shiftX
-                if (srcX !in 0 until w) continue
-
-                val srcIdx = srcYOffset + srcX
+            for (x in minX until maxX) {
+                val srcIdx = srcYOffset + (x - shiftX)
                 val destIdx = yOffset + x
 
                 val color = pixels[srcIdx]
@@ -621,7 +673,7 @@ object OrbitFusionEngine {
                 val g = ((color shr 8) and 0xFF).toFloat()
                 val b = (color and 0xFF).toFloat()
 
-                blendSample(blendMode, destIdx, r, g, b, weight * motionMult, accR, accG, accB, accW)
+                blendSample(blendMode, destIdx, r, g, b, effectiveWeight, accR, accG, accB, accW)
             }
         }
     }
@@ -633,18 +685,20 @@ object OrbitFusionEngine {
         isReference: Boolean, params: OrbitStyleParameters,
         blendMode: OrbitBlendMode
     ) {
+        val minY = max(0, shiftY)
+        val maxY = min(h, h + shiftY)
+        val minX = max(0, shiftX)
+        val maxX = min(w, w + shiftX)
+        if (minY >= maxY || minX >= maxX) return
+
         val density = 1.0f + (params.colorDensity / 100f) * 0.5f
-        for (y in 0 until h) {
-            val srcY = y - shiftY
-            if (srcY !in 0 until h) continue
+
+        for (y in minY until maxY) {
             val yOffset = y * w
-            val srcYOffset = srcY * w
+            val srcYOffset = (y - shiftY) * w
 
-            for (x in 0 until w) {
-                val srcX = x - shiftX
-                if (srcX !in 0 until w) continue
-
-                val srcIdx = srcYOffset + srcX
+            for (x in minX until maxX) {
+                val srcIdx = srcYOffset + (x - shiftX)
                 val destIdx = yOffset + x
 
                 val color = pixels[srcIdx]
@@ -667,15 +721,21 @@ object OrbitFusionEngine {
         echoR: FloatArray, echoG: FloatArray, echoB: FloatArray, echoW: FloatArray,
         w: Int, h: Int, shiftX: Int, shiftY: Int, params: OrbitStyleParameters
     ) {
-        for (y in 1 until h - 1) {
-            val srcY = y - shiftY
-            if (srcY !in 1 until h - 1) continue
-            for (x in 1 until w - 1) {
-                val srcX = x - shiftX
-                if (srcX !in 1 until w - 1) continue
+        val minY = max(1, 1 + shiftY)
+        val maxY = min(h - 1, h - 1 + shiftY)
+        val minX = max(1, 1 + shiftX)
+        val maxX = min(w - 1, w - 1 + shiftX)
+        if (minY >= maxY || minX >= maxX) return
 
-                val srcIdx = srcY * w + srcX
-                val destIdx = y * w + x
+        for (y in minY until maxY) {
+            val srcY = y - shiftY
+            val srcRowOffset = srcY * w
+            val destRowOffset = y * w
+
+            for (x in minX until maxX) {
+                val srcX = x - shiftX
+                val srcIdx = srcRowOffset + srcX
+                val destIdx = destRowOffset + x
 
                 val cCenter = pixels[srcIdx]
                 val cRight = pixels[srcIdx + 1]
@@ -883,6 +943,7 @@ object OrbitFusionEngine {
         imagePaths: List<String>,
         referenceIndex: Int
     ): AutoAlignResult = withContext(Dispatchers.Default) {
+        val regStartTime = System.currentTimeMillis()
         val total = imagePaths.size
         if (total == 0) {
             return@withContext AutoAlignResult(
@@ -1095,6 +1156,7 @@ object OrbitFusionEngine {
             averageConfidence = avgConf
         )
 
+        OrbitPerformanceTracker.recordRegistration(System.currentTimeMillis() - regStartTime)
         AutoAlignResult(shifts, report)
     }
 

@@ -11,11 +11,13 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.OrbitProjectRepository
 import com.example.engine.BitmapUtils
+import com.example.engine.OrbitPerformanceTracker
 import com.example.model.OrbitCaptureMode
 import com.example.model.OrbitProject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -241,6 +243,12 @@ class CameraViewModel(
         )
     }
 
+    fun onAppMovedToBackground() {
+        if (_uiState.value.intervalStatus == IntervalStatus.RUNNING) {
+            pauseIntervalCapture()
+        }
+    }
+
     private fun runIntervalLoop(imageCapture: ImageCapture) {
         intervalJob?.cancel()
         intervalJob = viewModelScope.launch {
@@ -336,27 +344,49 @@ class CameraViewModel(
                         viewModelScope.launch {
                             _effects.emit(CameraEffect.ShutterFlash)
                             if (bitmap != null) {
-                                val updatedProject = repository.addCapture(project.id, bitmap)
-
-                                // Downsample thumbnail for ghost overlay and UI memory efficiency
-                                val ghostBmp = Bitmap.createScaledBitmap(
-                                    bitmap,
-                                    720,
-                                    (720f * bitmap.height / bitmap.width).toInt().coerceAtLeast(1),
-                                    true
-                                )
+                                val captureStartTime = System.currentTimeMillis()
+                                val (updatedProject, thumbBmp, ghostBmp) = withContext(Dispatchers.IO) {
+                                    val updated = repository.addCapture(project.id, bitmap)
+                                    val thumbStart = System.currentTimeMillis()
+                                    val thumb = Bitmap.createScaledBitmap(
+                                        bitmap,
+                                        160,
+                                        (160f * bitmap.height / bitmap.width).toInt().coerceAtLeast(1),
+                                        true
+                                    )
+                                    val ghost = Bitmap.createScaledBitmap(
+                                        bitmap,
+                                        600,
+                                        (600f * bitmap.height / bitmap.width).toInt().coerceAtLeast(1),
+                                        true
+                                    )
+                                    OrbitPerformanceTracker.recordThumbnail(System.currentTimeMillis() - thumbStart)
+                                    Triple(updated, thumb, ghost)
+                                }
+                                OrbitPerformanceTracker.recordCapture(System.currentTimeMillis() - captureStartTime)
 
                                 val currentGhost = _uiState.value.ghostOverlayBitmap
                                 val newGhost = if (_uiState.value.ghostReferenceMode == "FIRST") {
-                                    currentGhost ?: ghostBmp
+                                    if (currentGhost != null) {
+                                        ghostBmp.recycle()
+                                        currentGhost
+                                    } else {
+                                        ghostBmp
+                                    }
                                 } else {
+                                    currentGhost?.recycle()
                                     ghostBmp
                                 }
+
+                                // Recycle previous thumbnail bitmap to avoid heap accumulation
+                                _uiState.value.lastCapturedThumbnail?.recycle()
+                                // Original uncompressed camera bitmap is safely persisted to disk and can now be freed
+                                bitmap.recycle()
 
                                 _uiState.value = _uiState.value.copy(
                                     isCapturing = false,
                                     activeProject = updatedProject ?: project,
-                                    lastCapturedThumbnail = bitmap,
+                                    lastCapturedThumbnail = thumbBmp,
                                     ghostOverlayBitmap = newGhost
                                 )
 
