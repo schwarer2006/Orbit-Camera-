@@ -30,7 +30,23 @@ enum class OrbitBlendMode(
 ) {
     WEIGHTED_AVERAGE(
         title = "Ausgewogen",
-        description = "Harmonische Mehrfachbelichtung mit dynamischem Referenzfokus"
+        description = "Harmonische Mittelung mit dynamischem Referenzfokus"
+    ),
+    LIGHTEN(
+        title = "Lichtspuren (Lighten)",
+        description = "Bevorzugt hellere Tonwerte und Lichtstrukturen"
+    ),
+    MULTIPLY(
+        title = "Dichte (Multiply)",
+        description = "Multiplikative Verdichtung dunkler Texturen und Linien"
+    ),
+    SCREEN(
+        title = "Leuchten (Screen)",
+        description = "Aufhellende Überlagerung mit kontrollierter Tonwertverteilung"
+    ),
+    DRIFT_FLOW(
+        title = "Fließende Dynamik",
+        description = "Verstärkt die Bewegungsrichtung der Bildserie"
     ),
     LIGHTEN_ADDITIVE(
         title = "Lichtspuren",
@@ -39,11 +55,22 @@ enum class OrbitBlendMode(
     MULTIPLY_DENSITY(
         title = "Dichte & Tiefe",
         description = "Verdichtet Texturen und grafische Konturen"
-    ),
-    DRIFT_FLOW(
-        title = "Fließende Dynamik",
-        description = "Verstärkt die Bewegungsrichtung der Bildserie"
-    )
+    );
+
+    val label: String
+        get() = title
+
+    companion object {
+        fun fromString(value: String?): OrbitBlendMode {
+            return when (value) {
+                "LIGHTEN", "LIGHTEN_ADDITIVE" -> LIGHTEN
+                "MULTIPLY", "MULTIPLY_DENSITY" -> MULTIPLY
+                "SCREEN" -> SCREEN
+                "DRIFT_FLOW" -> DRIFT_FLOW
+                else -> WEIGHTED_AVERAGE
+            }
+        }
+    }
 }
 
 data class OrbitProject(
@@ -69,10 +96,25 @@ data class OrbitProject(
     val intervalSeconds: Int = 3, // 2, 3, 5, 10
     // V0.8 Creative Engine fields
     val compositionStrategy: OrbitCompositionStrategy = OrbitCompositionStrategy.SUBJECT_CENTERED,
-    val workspaceMode: OrbitWorkspaceMode = OrbitWorkspaceMode.SIMPLE
+    val workspaceMode: OrbitWorkspaceMode = OrbitWorkspaceMode.SIMPLE,
+    // V0.9.0 Authentic Multi-Perspective fields
+    val anchorX: Float = 0.5f,
+    val anchorY: Float = 0.5f,
+    val artisticSpreadEnabled: Boolean = false,
+    val disabledImagePaths: Set<String> = emptySet(),
+    val maskEnabled: Boolean = false,
+    val maskRadius: Float = 0.35f,
+    val maskFeather: Float = 0.25f,
+    val maskIntensity: Float = 0.70f
 ) {
     val actualCount: Int
         get() = imagePaths.size
+
+    val activeCount: Int
+        get() = imagePaths.count { it !in disabledImagePaths }
+
+    val activeImagePaths: List<String>
+        get() = imagePaths.filter { it !in disabledImagePaths }
 
     val isCompleted: Boolean
         get() = actualCount >= targetCount

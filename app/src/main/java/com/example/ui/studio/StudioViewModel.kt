@@ -8,7 +8,9 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.OrbitProjectRepository
 import com.example.engine.BitmapUtils
 import com.example.engine.FusionProgress
+import com.example.engine.ImageQualityReport
 import com.example.engine.OrbitFusionEngine
+import com.example.engine.RegistrationReport
 import com.example.model.OrbitArtStyle
 import com.example.model.OrbitBlendMode
 import com.example.model.OrbitCompositionStrategy
@@ -45,15 +47,26 @@ data class StudioUiState(
     val individualShifts: Map<Int, Pair<Float, Float>> = emptyMap(),
     val isAutoAligning: Boolean = false,
     val autoAlignApplied: Boolean = false,
+    val registrationReport: RegistrationReport? = null,
     val blendMode: OrbitBlendMode = OrbitBlendMode.WEIGHTED_AVERAGE,
     val selectedRefIndex: Int = 0,
     val offsetX: Float = 0f,
     val offsetY: Float = 0f,
+    val anchorX: Float = 0.5f,
+    val anchorY: Float = 0.5f,
+    val artisticSpreadEnabled: Boolean = false,
+    val disabledImagePaths: Set<String> = emptySet(),
+    val maskEnabled: Boolean = false,
+    val maskRadius: Float = 45f,
+    val maskFeather: Float = 30f,
+    val maskIntensity: Float = 60f,
+    val imageQualityReports: Map<String, ImageQualityReport> = emptyMap(),
+    val isAboutDialogOpen: Boolean = false,
     val showOriginalComparison: Boolean = false,
     val exportedUri: Uri? = null,
     val message: String? = null,
 
-    // V0.5 Simple Quality Export
+    // Simple Quality Export
     val isExportDialogOpen: Boolean = false,
     val isExporting: Boolean = false,
     val exportProgress: FusionProgress? = null,
@@ -121,15 +134,33 @@ class StudioViewModel(
             selectedRefIndex = refIndex,
             offsetX = project.offsetX,
             offsetY = project.offsetY,
+            anchorX = project.anchorX,
+            anchorY = project.anchorY,
+            artisticSpreadEnabled = project.artisticSpreadEnabled,
+            disabledImagePaths = project.disabledImagePaths,
+            maskEnabled = project.maskEnabled,
+            maskRadius = project.maskRadius,
+            maskFeather = project.maskFeather,
+            maskIntensity = project.maskIntensity,
             individualShifts = emptyMap(),
             autoAlignApplied = false,
+            registrationReport = null,
             renderedBitmap = null,
             referenceBitmap = null,
             exportedUri = null
         )
 
         loadReferenceBitmap(project, refIndex)
+        analyzeProjectQuality(project)
         scheduleDebouncedFusion(delayMs = 0L)
+    }
+
+    private fun analyzeProjectQuality(project: OrbitProject) {
+        if (project.imagePaths.isEmpty()) return
+        viewModelScope.launch {
+            val qualityMap = BitmapUtils.analyzeImageQuality(project.imagePaths)
+            _uiState.value = _uiState.value.copy(imageQualityReports = qualityMap)
+        }
     }
 
     private fun loadReferenceBitmap(project: OrbitProject, refIndex: Int) {
@@ -156,70 +187,170 @@ class StudioViewModel(
 
     fun setArtStyle(style: OrbitArtStyle) {
         val currentParams = _uiState.value.styleParameters
-        // Keep user's current abstraction & stability or apply preset defaults
         val newParams = style.defaultParameters.copy(
             abstraction = currentParams.abstraction,
-            subjectStability = currentParams.subjectStability
+            subjectStability = currentParams.subjectStability,
+            colorIntensity = currentParams.colorIntensity,
+            contrast = currentParams.contrast,
+            vibrance = currentParams.vibrance,
+            warmth = currentParams.warmth
         )
+
         _uiState.value = _uiState.value.copy(
             selectedArtStyle = style,
-            styleParameters = newParams
+            styleParameters = newParams,
+            compositionStrategy = style.defaultStrategy
+        )
+        val project = _uiState.value.activeProject ?: return
+        repository.updateProject(
+            project.copy(
+                artStyle = style,
+                styleParams = newParams,
+                compositionStrategy = style.defaultStrategy
+            )
         )
         scheduleDebouncedFusion(delayMs = 0L)
     }
 
+    fun setSubjectAnchor(x: Float, y: Float) {
+        val clampedX = x.coerceIn(0.05f, 0.95f)
+        val clampedY = y.coerceIn(0.05f, 0.95f)
+        _uiState.value = _uiState.value.copy(anchorX = clampedX, anchorY = clampedY)
+        val project = _uiState.value.activeProject ?: return
+        repository.updateProject(project.copy(anchorX = clampedX, anchorY = clampedY))
+        scheduleDebouncedFusion(delayMs = 150L)
+    }
+
+    fun toggleArtisticSpread(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(artisticSpreadEnabled = enabled)
+        val project = _uiState.value.activeProject ?: return
+        repository.updateProject(project.copy(artisticSpreadEnabled = enabled))
+        scheduleDebouncedFusion(delayMs = 0L)
+    }
+
+    fun toggleImageDisabled(path: String) {
+        val currentDisabled = _uiState.value.disabledImagePaths.toMutableSet()
+        val wasDisabled = path in currentDisabled
+        val totalImages = _uiState.value.activeProject?.imagePaths?.size ?: 0
+        val activeCountBefore = totalImages - currentDisabled.size
+
+        if (!wasDisabled && activeCountBefore <= 2) {
+            viewModelScope.launch {
+                _effects.emit(StudioEffect.ShowMessage("Mindestens 2 Aufnahmen müssen aktiv bleiben"))
+            }
+            return
+        }
+
+        if (wasDisabled) {
+            currentDisabled.remove(path)
+        } else {
+            currentDisabled.add(path)
+        }
+
+        _uiState.value = _uiState.value.copy(disabledImagePaths = currentDisabled)
+        val project = _uiState.value.activeProject ?: return
+        repository.updateProject(project.copy(disabledImagePaths = currentDisabled))
+        scheduleDebouncedFusion(delayMs = 0L)
+    }
+
+    fun setSelectiveMask(
+        enabled: Boolean,
+        radius: Float? = null,
+        feather: Float? = null,
+        intensity: Float? = null
+    ) {
+        val newR = radius ?: _uiState.value.maskRadius
+        val newF = feather ?: _uiState.value.maskFeather
+        val newI = intensity ?: _uiState.value.maskIntensity
+
+        _uiState.value = _uiState.value.copy(
+            maskEnabled = enabled,
+            maskRadius = newR,
+            maskFeather = newF,
+            maskIntensity = newI
+        )
+        val project = _uiState.value.activeProject ?: return
+        repository.updateProject(
+            project.copy(
+                maskEnabled = enabled,
+                maskRadius = newR,
+                maskFeather = newF,
+                maskIntensity = newI
+            )
+        )
+        scheduleDebouncedFusion(delayMs = 200L)
+    }
+
+    fun openAboutDialog() {
+        _uiState.value = _uiState.value.copy(isAboutDialogOpen = true)
+    }
+
+    fun closeAboutDialog() {
+        _uiState.value = _uiState.value.copy(isAboutDialogOpen = false)
+    }
+
     fun setAbstraction(value: Float) {
-        val updatedParams = _uiState.value.styleParameters.copy(abstraction = value)
-        _uiState.value = _uiState.value.copy(styleParameters = updatedParams)
-        scheduleDebouncedFusion(delayMs = 280L)
+        updateParams { it.copy(abstraction = value.coerceIn(0f, 100f)) }
     }
 
     fun setSubjectStability(value: Float) {
-        val updatedParams = _uiState.value.styleParameters.copy(subjectStability = value)
-        _uiState.value = _uiState.value.copy(styleParameters = updatedParams)
-        scheduleDebouncedFusion(delayMs = 280L)
+        updateParams { it.copy(subjectStability = value.coerceIn(0f, 100f)) }
     }
 
     fun setColorIntensity(value: Float) {
-        val updatedParams = _uiState.value.styleParameters.copy(colorIntensity = value)
-        _uiState.value = _uiState.value.copy(styleParameters = updatedParams)
-        scheduleDebouncedFusion(delayMs = 280L)
-    }
-
-    fun setVibrance(value: Float) {
-        val updatedParams = _uiState.value.styleParameters.copy(vibrance = value)
-        _uiState.value = _uiState.value.copy(styleParameters = updatedParams)
-        scheduleDebouncedFusion(delayMs = 280L)
-    }
-
-    fun setContrast(value: Float) {
-        val updatedParams = _uiState.value.styleParameters.copy(contrast = value)
-        _uiState.value = _uiState.value.copy(styleParameters = updatedParams)
-        scheduleDebouncedFusion(delayMs = 280L)
-    }
-
-    fun setWarmth(value: Float) {
-        val updatedParams = _uiState.value.styleParameters.copy(warmth = value)
-        _uiState.value = _uiState.value.copy(styleParameters = updatedParams)
-        scheduleDebouncedFusion(delayMs = 280L)
-    }
-
-    fun setColorDensity(value: Float) {
-        val updatedParams = _uiState.value.styleParameters.copy(colorDensity = value)
-        _uiState.value = _uiState.value.copy(styleParameters = updatedParams)
-        scheduleDebouncedFusion(delayMs = 280L)
+        updateParams { it.copy(colorIntensity = value.coerceIn(0f, 100f)) }
     }
 
     fun setEdgeEmphasis(value: Float) {
-        val updatedParams = _uiState.value.styleParameters.copy(edgeEmphasis = value)
-        _uiState.value = _uiState.value.copy(styleParameters = updatedParams)
-        scheduleDebouncedFusion(delayMs = 280L)
+        updateParams { it.copy(edgeEmphasis = value.coerceIn(0f, 100f)) }
     }
 
     fun setBackgroundDissolve(value: Float) {
-        val updatedParams = _uiState.value.styleParameters.copy(backgroundDissolve = value)
-        _uiState.value = _uiState.value.copy(styleParameters = updatedParams)
-        scheduleDebouncedFusion(delayMs = 280L)
+        updateParams { it.copy(backgroundDissolve = value.coerceIn(0f, 100f)) }
+    }
+
+    fun setVibrance(value: Float) {
+        updateParams { it.copy(vibrance = value.coerceIn(0f, 100f)) }
+    }
+
+    fun setContrast(value: Float) {
+        updateParams { it.copy(contrast = value.coerceIn(0f, 100f)) }
+    }
+
+    fun setWarmth(value: Float) {
+        updateParams { it.copy(warmth = value.coerceIn(-100f, 100f)) }
+    }
+
+    fun setColorDensity(value: Float) {
+        updateParams { it.copy(colorDensity = value.coerceIn(0f, 100f)) }
+    }
+
+    fun setEchoStrength(value: Float) {
+        updateParams { it.copy(echoStrength = value.coerceIn(0f, 100f)) }
+    }
+
+    fun setEchoCount(value: Float) {
+        updateParams { it.copy(echoCount = value.coerceIn(3f, 12f)) }
+    }
+
+    fun setPerspectiveSpread(value: Float) {
+        updateParams { it.copy(perspectiveSpread = value.coerceIn(0f, 100f)) }
+    }
+
+    fun setSoftness(value: Float) {
+        updateParams { it.copy(softness = value.coerceIn(0f, 100f)) }
+    }
+
+    fun setLightGlow(value: Float) {
+        updateParams { it.copy(lightGlow = value.coerceIn(0f, 100f)) }
+    }
+
+    fun setMotionStrength(value: Float) {
+        updateParams { it.copy(motionStrength = value.coerceIn(0f, 100f)) }
+    }
+
+    fun setDetailDensity(value: Float) {
+        updateParams { it.copy(detailDensity = value.coerceIn(0f, 100f)) }
     }
 
     fun updateStyleParameters(params: OrbitStyleParameters) {
@@ -227,26 +358,30 @@ class StudioViewModel(
         scheduleDebouncedFusion(delayMs = 280L)
     }
 
-    fun surpriseMix() {
+    private fun updateParams(transform: (OrbitStyleParameters) -> OrbitStyleParameters) {
+        val newParams = transform(_uiState.value.styleParameters)
+        _uiState.value = _uiState.value.copy(styleParameters = newParams)
+        scheduleDebouncedFusion(delayMs = 280L)
+    }
+
+    fun surpriseMix() = applySurpriseMix()
+
+    fun applySurpriseMix() {
         val currentParams = _uiState.value.styleParameters
         val currentStrategy = _uiState.value.compositionStrategy
-        val style = _uiState.value.selectedArtStyle
-
-        // Save state for undo
         undoStyleParameters = currentParams
         undoCompositionStrategy = currentStrategy
 
-        fun r(min: Float, max: Float) = min + Random.nextFloat() * (max - min)
+        fun r(min: Float, max: Float) = (min + Random.nextFloat() * (max - min))
 
-        val newParams = when (style) {
+        val newParams = when (_uiState.value.selectedArtStyle) {
             OrbitArtStyle.IMPRESSIONIST -> currentParams.copy(
-                abstraction = r(40f, 68f),
-                subjectStability = r(45f, 75f),
+                abstraction = r(30f, 65f),
+                subjectStability = r(40f, 75f),
                 vibrance = r(50f, 85f),
                 colorIntensity = r(55f, 80f),
-                contrast = r(45f, 65f),
-                warmth = r(15f, 60f),
-                echoStrength = r(25f, 55f),
+                contrast = r(45f, 70f),
+                warmth = r(10f, 50f),
                 backgroundDissolve = r(35f, 70f),
                 softness = r(30f, 60f)
             )
@@ -329,12 +464,14 @@ class StudioViewModel(
 
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isAutoAligning = true)
-            val shifts = OrbitFusionEngine.autoAlignImages(project.imagePaths, _uiState.value.selectedRefIndex)
+            val alignResult = OrbitFusionEngine.autoAlignImages(project.imagePaths, _uiState.value.selectedRefIndex)
+            val rep = alignResult.report
             _uiState.value = _uiState.value.copy(
                 isAutoAligning = false,
-                individualShifts = shifts,
+                individualShifts = alignResult.shifts,
+                registrationReport = rep,
                 autoAlignApplied = true,
-                message = "Automatische 2D-Ausrichtung angewendet"
+                message = "Sobel-Registrierung: ${rep.successfulCount}/${rep.totalImages} Fotos zuverlässig ausgerichtet"
             )
             scheduleDebouncedFusion(delayMs = 0L)
         }
@@ -344,6 +481,7 @@ class StudioViewModel(
         _uiState.value = _uiState.value.copy(
             individualShifts = emptyMap(),
             autoAlignApplied = false,
+            registrationReport = null,
             offsetX = 0f,
             offsetY = 0f,
             message = "Ausrichtung zurückgesetzt"
@@ -353,6 +491,8 @@ class StudioViewModel(
 
     fun setBlendMode(mode: OrbitBlendMode) {
         _uiState.value = _uiState.value.copy(blendMode = mode)
+        val project = _uiState.value.activeProject ?: return
+        repository.updateProject(project.copy(blendMode = mode))
         scheduleDebouncedFusion(delayMs = 0L)
     }
 
@@ -392,7 +532,7 @@ class StudioViewModel(
 
             _uiState.value = _uiState.value.copy(
                 isRendering = true,
-                renderProgress = FusionProgress(0, project.actualCount, "Vorbereitung...")
+                renderProgress = FusionProgress(0, project.activeCount, "Vorbereitung...")
             )
 
             val updatedProject = project.copy(
@@ -404,7 +544,15 @@ class StudioViewModel(
                 blendMode = state.blendMode,
                 referenceImageIndex = state.selectedRefIndex,
                 offsetX = state.offsetX,
-                offsetY = state.offsetY
+                offsetY = state.offsetY,
+                anchorX = state.anchorX,
+                anchorY = state.anchorY,
+                artisticSpreadEnabled = state.artisticSpreadEnabled,
+                disabledImagePaths = state.disabledImagePaths,
+                maskEnabled = state.maskEnabled,
+                maskRadius = state.maskRadius,
+                maskFeather = state.maskFeather,
+                maskIntensity = state.maskIntensity
             )
             repository.updateProject(updatedProject)
 
@@ -421,6 +569,14 @@ class StudioViewModel(
                     blendMode = state.blendMode,
                     targetWidth = previewDimension,
                     targetHeight = previewDimension,
+                    anchorX = state.anchorX,
+                    anchorY = state.anchorY,
+                    artisticSpreadEnabled = state.artisticSpreadEnabled,
+                    disabledImagePaths = state.disabledImagePaths,
+                    maskEnabled = state.maskEnabled,
+                    maskRadius = state.maskRadius,
+                    maskFeather = state.maskFeather,
+                    maskIntensity = state.maskIntensity,
                     onProgress = { progress ->
                         if (thisGen == renderGeneration) {
                             _uiState.value = _uiState.value.copy(renderProgress = progress)
@@ -443,7 +599,6 @@ class StudioViewModel(
                     )
                 }
             } catch (ce: CancellationException) {
-                // Cancelled cooperatively by a newer slider movement or action
                 throw ce
             } catch (t: Throwable) {
                 t.printStackTrace()
@@ -516,7 +671,7 @@ class StudioViewModel(
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(
                 isExporting = true,
-                exportProgress = FusionProgress(0, project.actualCount, "Vorbereitung für ${size.title} ($targetW×$targetH px)...")
+                exportProgress = FusionProgress(0, project.activeCount, "Vorbereitung für ${size.title} ($targetW×$targetH px)...")
             )
 
             try {
@@ -533,6 +688,14 @@ class StudioViewModel(
                     blendMode = blendMode,
                     targetWidth = targetW,
                     targetHeight = targetH,
+                    anchorX = state.anchorX,
+                    anchorY = state.anchorY,
+                    artisticSpreadEnabled = state.artisticSpreadEnabled,
+                    disabledImagePaths = state.disabledImagePaths,
+                    maskEnabled = state.maskEnabled,
+                    maskRadius = state.maskRadius,
+                    maskFeather = state.maskFeather,
+                    maskIntensity = state.maskIntensity,
                     onProgress = { progress ->
                         _uiState.value = _uiState.value.copy(exportProgress = progress)
                     }

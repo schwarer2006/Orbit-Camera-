@@ -22,7 +22,14 @@ data class OrbitStyleParameters(
     val motionStrength: Float = 35f,       // 0..100: Bewegungsdynamik
     val detailDensity: Float = 60f,        // 0..100: Detail- & Texturdichte
     val atmosphere: Float = 45f,           // 0..100: Atmosphärische Schleierwirkung
-    val blendStrength: Float = 70f         // 0..100: Technische Überlagerungsstärke
+    val blendStrength: Float = 70f,        // 0..100: Technische Überlagerungsstärke
+
+    // V0.9.0 Authentic Multi-Perspective Parameter
+    val artisticSpreadEnabled: Boolean = false, // false = Natural Perspective, true = künstlicher Spread
+    val maskEnabled: Boolean = false,           // Selektive Motivgewichtung (weichkantige Bereichsmaske)
+    val maskRadius: Float = 0.35f,              // 0.1..0.8: Relativer Radius der Motivmaske
+    val maskFeather: Float = 0.25f,             // 0.05..0.6: Weichheit des Maskenübergangs
+    val maskIntensity: Float = 0.70f            // 0..1: Gewichtungsstärke der Bereichsmaske
 )
 
 enum class OrbitArtStyle(
@@ -186,5 +193,11 @@ enum class OrbitArtStyle(
             atmosphere = 50f,
             blendStrength = 75f
         )
-    )
+    );
+
+    val defaultStrategy: OrbitCompositionStrategy
+        get() = when (this) {
+            ARCHITECTURAL, URBAN_LAYERS -> OrbitCompositionStrategy.STRUCTURAL_FIELD
+            else -> OrbitCompositionStrategy.SUBJECT_CENTERED
+        }
 }

@@ -220,4 +220,118 @@ object BitmapUtils {
             e.printStackTrace()
         }
     }
+
+    /**
+     * Fast local quality assessment for a series of images (sharpness, exposure, similarity).
+     * Non-destructive, advisory indicators only.
+     */
+    fun analyzeImageQuality(imagePaths: List<String>): Map<String, ImageQualityReport> {
+        val result = mutableMapOf<String, ImageQualityReport>()
+        if (imagePaths.isEmpty()) return result
+
+        val sampleDim = 64
+        val luminances = mutableListOf<Float>()
+        val sharpnesses = mutableListOf<Float>()
+        val pixelMaps = mutableListOf<FloatArray?>()
+
+        for (path in imagePaths) {
+            val bmp = decodeSampledBitmap(path, sampleDim, sampleDim)
+            if (bmp == null) {
+                pixelMaps.add(null)
+                luminances.add(128f)
+                sharpnesses.add(0f)
+                continue
+            }
+            val w = bmp.width
+            val h = bmp.height
+            val pixels = IntArray(w * h)
+            bmp.getPixels(pixels, 0, w, 0, 0, w, h)
+            bmp.recycle()
+
+            val lums = FloatArray(w * h)
+            var sumLum = 0.0
+            var sumGrad = 0.0
+
+            for (y in 0 until h) {
+                for (x in 0 until w) {
+                    val idx = y * w + x
+                    val c = pixels[idx]
+                    val l = (0.299f * ((c shr 16) and 0xFF) + 0.587f * ((c shr 8) and 0xFF) + 0.114f * (c and 0xFF))
+                    lums[idx] = l
+                    sumLum += l
+
+                    if (x > 0 && y > 0) {
+                        val gx = kotlin.math.abs(l - lums[idx - 1])
+                        val gy = kotlin.math.abs(l - lums[idx - w])
+                        sumGrad += (gx + gy)
+                    }
+                }
+            }
+
+            val avgL = (sumLum / (w * h)).toFloat()
+            val sharp = (sumGrad / (w * h)).toFloat()
+            luminances.add(avgL)
+            sharpnesses.add(sharp)
+            pixelMaps.add(lums)
+        }
+
+        val avgSharpness = if (sharpnesses.isNotEmpty()) sharpnesses.average().toFloat() else 10f
+        val sortedLums = luminances.sorted()
+        val medianLum = if (sortedLums.isNotEmpty()) sortedLums[sortedLums.size / 2] else 128f
+
+        for (i in imagePaths.indices) {
+            val path = imagePaths[i]
+            val sharp = sharpnesses[i]
+            val lum = luminances[i]
+            val currentPix = pixelMaps[i]
+
+            val isBlurry = (sharp < avgSharpness * 0.40f && sharp < 12.0f)
+            val isExposureOutlier = kotlin.math.abs(lum - medianLum) > 60f
+
+            var isNearDuplicate = false
+            if (i > 0) {
+                val prevPix = pixelMaps[i - 1]
+                if (currentPix != null && prevPix != null && currentPix.size == prevPix.size) {
+                    var diffSum = 0.0
+                    for (k in currentPix.indices) {
+                        diffSum += kotlin.math.abs(currentPix[k] - prevPix[k])
+                    }
+                    val avgDiff = (diffSum / currentPix.size).toFloat()
+                    if (avgDiff < 3.8f) {
+                        isNearDuplicate = true
+                    }
+                }
+            }
+
+            val warnings = mutableListOf<String>()
+            if (isBlurry) warnings.add("Möglicherweise unscharf")
+            if (isExposureOutlier) warnings.add("Starke Belichtungsabweichung")
+            if (isNearDuplicate) warnings.add("Sehr ähnlich zu vorherigem Bild")
+
+            result[path] = ImageQualityReport(
+                path = path,
+                sharpnessScore = sharp,
+                avgLuminance = lum,
+                isBlurry = isBlurry,
+                isExposureOutlier = isExposureOutlier,
+                isNearDuplicate = isNearDuplicate,
+                warnings = warnings
+            )
+        }
+
+        return result
+    }
+}
+
+data class ImageQualityReport(
+    val path: String,
+    val sharpnessScore: Float,
+    val avgLuminance: Float,
+    val isBlurry: Boolean,
+    val isExposureOutlier: Boolean,
+    val isNearDuplicate: Boolean,
+    val warnings: List<String>
+) {
+    val isDuplicate: Boolean
+        get() = isNearDuplicate
 }

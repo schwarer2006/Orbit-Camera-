@@ -13,6 +13,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -22,6 +23,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -43,6 +45,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Compare
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Layers
@@ -56,6 +59,9 @@ import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Undo
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import com.example.BuildConfig
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -187,13 +193,27 @@ fun StudioScreen(
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text = "${active.actualCount} Aufnahmen • ${uiState.selectedArtStyle.title} • ORBIT V0.3",
+                        text = "${active.activeCount}/${active.actualCount} Aufnahmen • ${uiState.selectedArtStyle.title} • ORBIT V${BuildConfig.VERSION_NAME}",
                         style = MaterialTheme.typography.bodySmall,
                         color = CyanAccent
                     )
                 }
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // About Dialog Button
+                    IconButton(
+                        onClick = { viewModel.openAboutDialog() },
+                        modifier = Modifier
+                            .background(SlateDark800, CircleShape)
+                            .testTag("btn_about_orbit")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Info,
+                            contentDescription = "Über ORBIT",
+                            tint = CyanAccent
+                        )
+                    }
+
                     // Export Button (Qualitäts-Export)
                     IconButton(
                         onClick = { viewModel.openExportDialog() },
@@ -227,7 +247,7 @@ fun StudioScreen(
             }
 
             // Big Artwork Preview Viewport
-            Box(
+            BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp)
@@ -235,9 +255,20 @@ fun StudioScreen(
                     .clip(RoundedCornerShape(16.dp))
                     .background(SlateDark900)
                     .border(1.dp, SlateDark700, RoundedCornerShape(16.dp))
+                    .pointerInput(uiState.compositionStrategy) {
+                        detectTapGestures { offset ->
+                            if (uiState.compositionStrategy == OrbitCompositionStrategy.SUBJECT_CENTERED) {
+                                val ax = (offset.x / size.width.toFloat()).coerceIn(0.05f, 0.95f)
+                                val ay = (offset.y / size.height.toFloat()).coerceIn(0.05f, 0.95f)
+                                viewModel.setSubjectAnchor(ax, ay)
+                            }
+                        }
+                    }
                     .testTag("studio_preview_box"),
                 contentAlignment = Alignment.Center
             ) {
+                val boxWidth = maxWidth
+                val boxHeight = maxHeight
                 val bitmapToDisplay = if (uiState.showOriginalComparison && uiState.referenceBitmap != null) {
                     uiState.referenceBitmap
                 } else {
@@ -262,6 +293,60 @@ fun StudioScreen(
                             text = "Initialisiere Fusion...",
                             color = SlateLight100,
                             style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                }
+
+                // Interactive Anchor Reticle in SUBJECT_CENTERED mode
+                if (uiState.compositionStrategy == OrbitCompositionStrategy.SUBJECT_CENTERED) {
+                    val reticleX = boxWidth * uiState.anchorX - 16.dp
+                    val reticleY = boxHeight * uiState.anchorY - 16.dp
+
+                    // Optional selective mask outline
+                    if (uiState.maskEnabled) {
+                        val maskPixelRadius = boxWidth * (uiState.maskRadius / 100f) * 0.5f
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .offset(
+                                    x = boxWidth * uiState.anchorX - maskPixelRadius,
+                                    y = boxHeight * uiState.anchorY - maskPixelRadius
+                                )
+                                .size(maskPixelRadius * 2)
+                                .border(1.dp, CyanAccent.copy(alpha = 0.45f), CircleShape)
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .offset(x = reticleX, y = reticleY)
+                            .size(32.dp)
+                            .border(1.5.dp, CyanNeon, CircleShape)
+                            .background(CyanNeon.copy(alpha = 0.25f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .background(CyanNeon, CircleShape)
+                        )
+                    }
+
+                    // Anchor coordinate badge at top start
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(8.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(SlateDark950.copy(alpha = 0.75f))
+                            .padding(horizontal = 6.dp, vertical = 3.dp)
+                    ) {
+                        Text(
+                            text = "Anker: ${(uiState.anchorX * 100).roundToInt()}% , ${(uiState.anchorY * 100).roundToInt()}% • Tippen zum Versetzen",
+                            color = CyanAccent,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Medium
                         )
                     }
                 }
@@ -750,22 +835,24 @@ fun StudioScreen(
 
                         Spacer(modifier = Modifier.height(10.dp))
 
-                        // Referenzbild Carousel
+                        // Referenzbild Carousel & Image Selection
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = "Referenzbild auswählen",
-                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                                color = SlateWhite
-                            )
-                            Text(
-                                text = "Bild ${uiState.selectedRefIndex + 1} / ${active.actualCount}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = CyanAccent
-                            )
+                            Column {
+                                Text(
+                                    text = "Aufnahmen & Referenzbild",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                                    color = SlateWhite
+                                )
+                                Text(
+                                    text = "${active.activeCount} von ${active.actualCount} aktiv • Ref: Bild ${uiState.selectedRefIndex + 1}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = CyanAccent
+                                )
+                            }
                         }
 
                         Spacer(modifier = Modifier.height(8.dp))
@@ -777,15 +864,19 @@ fun StudioScreen(
                         ) {
                             itemsIndexed(active.imagePaths) { index, path ->
                                 val isSelected = index == uiState.selectedRefIndex
+                                val isDisabled = path in uiState.disabledImagePaths
+                                val quality = uiState.imageQualityReports[path]
+
                                 Box(
                                     modifier = Modifier
-                                        .size(56.dp)
+                                        .size(62.dp)
                                         .clip(RoundedCornerShape(8.dp))
                                         .border(
                                             width = if (isSelected) 2.5.dp else 1.dp,
-                                            color = if (isSelected) CyanNeon else SlateDark700,
+                                            color = if (isSelected) CyanNeon else if (isDisabled) SlateDark800 else SlateDark700,
                                             shape = RoundedCornerShape(8.dp)
                                         )
+                                        .background(if (isDisabled) Color.Black else SlateDark900)
                                         .clickable { viewModel.selectReferenceIndex(index) }
                                         .testTag("ref_thumb_$index"),
                                     contentAlignment = Alignment.Center
@@ -794,8 +885,10 @@ fun StudioScreen(
                                         model = path,
                                         contentDescription = "Perspektive $index",
                                         modifier = Modifier.fillMaxSize(),
+                                        alpha = if (isDisabled) 0.35f else 1f,
                                         contentScale = ContentScale.Crop
                                     )
+
                                     if (isSelected) {
                                         Box(
                                             modifier = Modifier
@@ -810,6 +903,45 @@ fun StudioScreen(
                                                 contentDescription = "Ausgewählt",
                                                 tint = SlateDark950,
                                                 modifier = Modifier.size(10.dp)
+                                            )
+                                        }
+                                    }
+
+                                    // Non-destructive Enable/Disable Toggle
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.BottomStart)
+                                            .padding(2.dp)
+                                            .size(18.dp)
+                                            .clip(CircleShape)
+                                            .background(if (isDisabled) Color.Red.copy(alpha = 0.85f) else SlateDark950.copy(alpha = 0.75f))
+                                            .clickable { viewModel.toggleImageDisabled(path) },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = if (isDisabled) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                            contentDescription = if (isDisabled) "Aktivieren" else "Deaktivieren",
+                                            tint = if (isDisabled) Color.White else CyanAccent,
+                                            modifier = Modifier.size(11.dp)
+                                        )
+                                    }
+
+                                    // Quality advisory badge
+                                    if (quality != null && (quality.isBlurry || quality.isExposureOutlier || quality.isDuplicate)) {
+                                        Box(
+                                            modifier = Modifier
+                                                .align(Alignment.BottomEnd)
+                                                .padding(2.dp)
+                                                .size(14.dp)
+                                                .clip(CircleShape)
+                                                .background(AmberAccent),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = if (quality.isBlurry) "U" else if (quality.isExposureOutlier) "B" else "D",
+                                                color = SlateDark950,
+                                                fontSize = 8.sp,
+                                                fontWeight = FontWeight.Bold
                                             )
                                         }
                                     }
@@ -888,11 +1020,17 @@ fun StudioScreen(
 
                         // 2D Bildregistrierung & Ausrichtung
                         Text(
-                            text = "2D Bildregistrierung & Translation",
+                            text = "Authentische 2D-Bildregistrierung (Sobel Edge NCC)",
                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
                             color = SlateWhite
                         )
-                        Spacer(modifier = Modifier.height(6.dp))
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Robuste Kanten-Kreuzkorrelation gegen die ausgewählte Referenzaufnahme",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = CyanAccent
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
 
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -917,7 +1055,7 @@ fun StudioScreen(
                                 }
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = if (uiState.autoAlignApplied) "Ausrichtung aktiv" else "Grobe 2D-Ausrichtung",
+                                    text = if (uiState.autoAlignApplied) "Sobel-Ausrichtung aktiv" else "Sobel-Registrierung berechnen",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -933,6 +1071,46 @@ fun StudioScreen(
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text("Reset", fontSize = 11.sp)
                             }
+                        }
+
+                        // Registration report summary if available
+                        val regReport = uiState.registrationReport
+                        if (regReport != null) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            RegistrationReportCard(report = regReport)
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Perspektiv-Staffelung (Natürlich vs Algorithmisch)
+                        PerspectiveSpreadControl(
+                            artisticSpreadEnabled = uiState.artisticSpreadEnabled,
+                            onToggleArtisticSpread = { viewModel.toggleArtisticSpread(it) },
+                            spreadValue = uiState.styleParameters.perspectiveSpread,
+                            onSpreadChange = { viewModel.setPerspectiveSpread(it) }
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Fusions-Blend-Modi
+                        BlendModeSelector(
+                            selectedMode = uiState.blendMode,
+                            onSelectMode = { viewModel.setBlendMode(it) }
+                        )
+
+                        // Selektive Motivmaske (wenn Motivzentriert)
+                        if (uiState.compositionStrategy == OrbitCompositionStrategy.SUBJECT_CENTERED) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            SelectiveMaskControl(
+                                maskEnabled = uiState.maskEnabled,
+                                onToggleMask = { viewModel.setSelectiveMask(it) },
+                                radius = uiState.maskRadius,
+                                feather = uiState.maskFeather,
+                                intensity = uiState.maskIntensity,
+                                onRadiusChange = { viewModel.setSelectiveMask(uiState.maskEnabled, radius = it) },
+                                onFeatherChange = { viewModel.setSelectiveMask(uiState.maskEnabled, feather = it) },
+                                onIntensityChange = { viewModel.setSelectiveMask(uiState.maskEnabled, intensity = it) }
+                            )
                         }
 
                         Spacer(modifier = Modifier.height(10.dp))
@@ -1037,6 +1215,13 @@ fun StudioScreen(
                 onSelectQuality = { viewModel.setExportQuality(it) },
                 onSave = { viewModel.startExport(triggerShare = false) },
                 onShare = { viewModel.startExport(triggerShare = true) }
+            )
+        }
+
+        // V0.9.0 Über ORBIT Dialog
+        if (uiState.isAboutDialogOpen) {
+            OrbitAboutDialog(
+                onDismiss = { viewModel.closeAboutDialog() }
             )
         }
     }
@@ -1704,3 +1889,365 @@ fun OrbitExportDialog(
         }
     }
 }
+
+@Composable
+fun OrbitAboutDialog(
+    onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = SlateDark900),
+            border = androidx.compose.foundation.BorderStroke(1.dp, SlateDark700),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(8.dp)
+                .testTag("dialog_about_orbit")
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .background(CyanAccent.copy(alpha = 0.2f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CameraAlt,
+                        contentDescription = null,
+                        tint = CyanNeon,
+                        modifier = Modifier.size(26.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Text(
+                    text = "ORBIT Camera",
+                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                    color = SlateWhite
+                )
+
+                Text(
+                    text = "Computational Art Photography",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = CyanAccent
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(SlateDark800)
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        text = "Version ${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE}) • Status: Entwicklung",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = SlateLight100
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Text(
+                    text = "ORBIT Camera erzeugt aus fotografischen Aufnahmeserien neue, eigenständige künstlerische Bildkompositionen durch algorithmische Mehrperspektiven-Fusion und selektive Motivverankerung.\n\n" +
+                            "Künstlerische Referenz:\n" +
+                            "Der gestalterische Ansatz orientiert sich an der Mehrperspektivenfotografie „In the Round“ von Pep Ventosa.\n" +
+                            "(https://www.brianlorenzo.com/pep-ventosa-in-the-round-fotografie-technik/)\n\n" +
+                            "ORBIT ist ein eigenständiges Softwareprojekt ohne generative KI und verarbeitet ausschließlich echte Aufnahmen.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SlateLight100.copy(alpha = 0.85f),
+                    textAlign = TextAlign.Start,
+                    lineHeight = 18.sp
+                )
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                Button(
+                    onClick = onDismiss,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = CyanAccent,
+                        contentColor = SlateDark950
+                    ),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp)
+                        .testTag("btn_close_about_dialog")
+                ) {
+                    Text("Schließen", fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun BlendModeSelector(
+    selectedMode: OrbitBlendMode,
+    onSelectMode: (OrbitBlendMode) -> Unit
+) {
+    Column {
+        Text(
+            text = "Fusions-Mischmodus (Blend Mode)",
+            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+            color = SlateWhite
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = selectedMode.description,
+            style = MaterialTheme.typography.labelSmall,
+            color = CyanAccent
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            contentPadding = PaddingValues(horizontal = 2.dp)
+        ) {
+            val modes = listOf(
+                OrbitBlendMode.WEIGHTED_AVERAGE,
+                OrbitBlendMode.LIGHTEN,
+                OrbitBlendMode.MULTIPLY,
+                OrbitBlendMode.SCREEN,
+                OrbitBlendMode.DRIFT_FLOW
+            )
+            items(modes) { mode ->
+                val isSelected = selectedMode == mode
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (isSelected) SlateDark800 else SlateDark900)
+                        .border(
+                            width = if (isSelected) 1.5.dp else 1.dp,
+                            color = if (isSelected) CyanNeon else SlateDark700,
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                        .clickable { onSelectMode(mode) }
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                        .testTag("blend_mode_${mode.name.lowercase()}"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = mode.label,
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                        ),
+                        color = if (isSelected) SlateWhite else SlateLight100.copy(alpha = 0.7f)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun PerspectiveSpreadControl(
+    artisticSpreadEnabled: Boolean,
+    onToggleArtisticSpread: (Boolean) -> Unit,
+    spreadValue: Float,
+    onSpreadChange: (Float) -> Unit
+) {
+    Column(modifier = Modifier.padding(vertical = 4.dp)) {
+        Text(
+            text = "Perspektiv-Staffelung",
+            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+            color = SlateWhite
+        )
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+            text = if (artisticSpreadEnabled) "Künstlerische Auffächerung (Algorithmisch)" else "Natürliche Perspektive (Echte Kameraverschiebung)",
+            style = MaterialTheme.typography.labelSmall,
+            color = if (artisticSpreadEnabled) AmberAccent else CyanAccent
+        )
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(if (!artisticSpreadEnabled) SlateDark800 else SlateDark900)
+                    .border(
+                        width = if (!artisticSpreadEnabled) 1.5.dp else 1.dp,
+                        color = if (!artisticSpreadEnabled) CyanNeon else SlateDark800,
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                    .clickable { onToggleArtisticSpread(false) }
+                    .padding(8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "Natürlich",
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontWeight = if (!artisticSpreadEnabled) FontWeight.Bold else FontWeight.Normal
+                    ),
+                    color = if (!artisticSpreadEnabled) SlateWhite else SlateLight100.copy(alpha = 0.6f)
+                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(if (artisticSpreadEnabled) SlateDark800 else SlateDark900)
+                    .border(
+                        width = if (artisticSpreadEnabled) 1.5.dp else 1.dp,
+                        color = if (artisticSpreadEnabled) AmberAccent else SlateDark800,
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                    .clickable { onToggleArtisticSpread(true) }
+                    .padding(8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "Künstlerisch gestaffelt",
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontWeight = if (artisticSpreadEnabled) FontWeight.Bold else FontWeight.Normal
+                    ),
+                    color = if (artisticSpreadEnabled) SlateWhite else SlateLight100.copy(alpha = 0.6f)
+                )
+            }
+        }
+
+        if (artisticSpreadEnabled) {
+            Spacer(modifier = Modifier.height(6.dp))
+            ParameterSlider(
+                label = "Auffächerungsstärke (Perspective Spread)",
+                value = spreadValue,
+                onValueChange = onSpreadChange
+            )
+        }
+    }
+}
+
+@Composable
+fun SelectiveMaskControl(
+    maskEnabled: Boolean,
+    onToggleMask: (Boolean) -> Unit,
+    radius: Float,
+    feather: Float,
+    intensity: Float,
+    onRadiusChange: (Float) -> Unit,
+    onFeatherChange: (Float) -> Unit,
+    onIntensityChange: (Float) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(SlateDark900)
+            .border(1.dp, if (maskEnabled) CyanNeon.copy(alpha = 0.6f) else SlateDark800, RoundedCornerShape(12.dp))
+            .padding(12.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Selektive Motivmaske (Mask)",
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                    color = SlateWhite
+                )
+                Text(
+                    text = "Weiche Zentrierung um den Motivanker",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = CyanAccent
+                )
+            }
+            androidx.compose.material3.Switch(
+                checked = maskEnabled,
+                onCheckedChange = onToggleMask,
+                colors = androidx.compose.material3.SwitchDefaults.colors(
+                    checkedThumbColor = CyanNeon,
+                    checkedTrackColor = CyanAccent.copy(alpha = 0.4f)
+                )
+            )
+        }
+
+        if (maskEnabled) {
+            Spacer(modifier = Modifier.height(8.dp))
+            ParameterSlider(
+                label = "Maskenradius: ${radius.roundToInt()}%",
+                value = radius,
+                onValueChange = onRadiusChange
+            )
+            ParameterSlider(
+                label = "Weiche Kante (Feather): ${feather.roundToInt()}%",
+                value = feather,
+                onValueChange = onFeatherChange
+            )
+            ParameterSlider(
+                label = "Motiv-Dominanz: ${intensity.roundToInt()}%",
+                value = intensity,
+                onValueChange = onIntensityChange
+            )
+        }
+    }
+}
+
+@Composable
+fun RegistrationReportCard(
+    report: com.example.engine.RegistrationReport
+) {
+    Card(
+        shape = RoundedCornerShape(10.dp),
+        colors = CardDefaults.cardColors(containerColor = SlateDark800),
+        border = androidx.compose.foundation.BorderStroke(1.dp, SlateDark700),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Sobel Edge NCC Registrierungsbericht",
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                    color = CyanNeon
+                )
+                Text(
+                    text = "Ø ${(report.averageConfidence * 100).roundToInt()}% Konfidenz",
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                    color = if (report.averageConfidence >= 0.4f) CyanAccent else AmberAccent
+                )
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "• ${report.successfulCount}/${report.totalImages} Bilder zuverlässig ausgerichtet",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SlateWhite
+                )
+                if (report.lowConfidenceCount > 0) {
+                    Text(
+                        text = "• ${report.lowConfidenceCount} mit geringer Korrelation",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = AmberAccent
+                    )
+                }
+            }
+        }
+    }
+}
+

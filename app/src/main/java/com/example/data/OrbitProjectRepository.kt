@@ -94,12 +94,25 @@ class OrbitProjectRepository(private val context: Context) {
                         motionStrength = paramsObj.optDouble("motionStrength", def.motionStrength.toDouble()).toFloat(),
                         detailDensity = paramsObj.optDouble("detailDensity", def.detailDensity.toDouble()).toFloat(),
                         atmosphere = paramsObj.optDouble("atmosphere", def.atmosphere.toDouble()).toFloat(),
-                        blendStrength = paramsObj.optDouble("blendStrength", def.blendStrength.toDouble()).toFloat()
+                        blendStrength = paramsObj.optDouble("blendStrength", def.blendStrength.toDouble()).toFloat(),
+                        artisticSpreadEnabled = paramsObj.optBoolean("artisticSpreadEnabled", def.artisticSpreadEnabled),
+                        maskEnabled = paramsObj.optBoolean("maskEnabled", def.maskEnabled),
+                        maskRadius = paramsObj.optDouble("maskRadius", def.maskRadius.toDouble()).toFloat(),
+                        maskFeather = paramsObj.optDouble("maskFeather", def.maskFeather.toDouble()).toFloat(),
+                        maskIntensity = paramsObj.optDouble("maskIntensity", def.maskIntensity.toDouble()).toFloat()
                     )
                 } else {
                     artStyle.defaultParameters.copy(
                         abstraction = obj.optDouble("abstractionLevel", def.abstraction.toDouble()).toFloat()
                     )
+                }
+
+                val disabledPathsSet = mutableSetOf<String>()
+                val disabledArr = obj.optJSONArray("disabledImagePaths")
+                if (disabledArr != null) {
+                    for (k in 0 until disabledArr.length()) {
+                        disabledPathsSet.add(disabledArr.getString(k))
+                    }
                 }
 
                 val project = OrbitProject(
@@ -117,11 +130,7 @@ class OrbitProjectRepository(private val context: Context) {
                     abstractionLevel = styleParams.abstraction,
                     offsetX = obj.optDouble("offsetX", 0.0).toFloat(),
                     offsetY = obj.optDouble("offsetY", 0.0).toFloat(),
-                    blendMode = try {
-                        OrbitBlendMode.valueOf(obj.optString("blendMode", OrbitBlendMode.WEIGHTED_AVERAGE.name))
-                    } catch (e: Exception) {
-                        OrbitBlendMode.WEIGHTED_AVERAGE
-                    },
+                    blendMode = OrbitBlendMode.fromString(obj.optString("blendMode", OrbitBlendMode.WEIGHTED_AVERAGE.name)),
                     artStyle = artStyle,
                     styleParams = styleParams,
                     lastRenderedPath = obj.optString("lastRenderedPath", null).takeIf { it != "null" && it?.isNotBlank() == true },
@@ -139,7 +148,15 @@ class OrbitProjectRepository(private val context: Context) {
                         OrbitWorkspaceMode.valueOf(obj.optString("workspaceMode", OrbitWorkspaceMode.SIMPLE.name))
                     } catch (e: Exception) {
                         OrbitWorkspaceMode.SIMPLE
-                    }
+                    },
+                    anchorX = obj.optDouble("anchorX", 0.5).toFloat(),
+                    anchorY = obj.optDouble("anchorY", 0.5).toFloat(),
+                    artisticSpreadEnabled = obj.optBoolean("artisticSpreadEnabled", false),
+                    disabledImagePaths = disabledPathsSet,
+                    maskEnabled = obj.optBoolean("maskEnabled", false),
+                    maskRadius = obj.optDouble("maskRadius", 0.35).toFloat(),
+                    maskFeather = obj.optDouble("maskFeather", 0.25).toFloat(),
+                    maskIntensity = obj.optDouble("maskIntensity", 0.70).toFloat()
                 )
                 list.add(project)
             }
@@ -189,6 +206,11 @@ class OrbitProjectRepository(private val context: Context) {
                         put("detailDensity", p.styleParams.detailDensity.toDouble())
                         put("atmosphere", p.styleParams.atmosphere.toDouble())
                         put("blendStrength", p.styleParams.blendStrength.toDouble())
+                        put("artisticSpreadEnabled", p.styleParams.artisticSpreadEnabled)
+                        put("maskEnabled", p.styleParams.maskEnabled)
+                        put("maskRadius", p.styleParams.maskRadius.toDouble())
+                        put("maskFeather", p.styleParams.maskFeather.toDouble())
+                        put("maskIntensity", p.styleParams.maskIntensity.toDouble())
                     }
                     put("styleParams", paramsObj)
 
@@ -200,6 +222,16 @@ class OrbitProjectRepository(private val context: Context) {
                     put("intervalSeconds", p.intervalSeconds)
                     put("compositionStrategy", p.compositionStrategy.name)
                     put("workspaceMode", p.workspaceMode.name)
+                    put("anchorX", p.anchorX.toDouble())
+                    put("anchorY", p.anchorY.toDouble())
+                    put("artisticSpreadEnabled", p.artisticSpreadEnabled)
+                    val disabledArr = JSONArray()
+                    p.disabledImagePaths.forEach { disabledArr.put(it) }
+                    put("disabledImagePaths", disabledArr)
+                    put("maskEnabled", p.maskEnabled)
+                    put("maskRadius", p.maskRadius.toDouble())
+                    put("maskFeather", p.maskFeather.toDouble())
+                    put("maskIntensity", p.maskIntensity.toDouble())
                 }
                 array.put(obj)
             }
