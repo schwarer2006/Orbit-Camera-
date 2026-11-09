@@ -58,11 +58,25 @@ import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.BookmarkAdd
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Exposure
+import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import com.example.model.OrbitVariant
 import com.example.BuildConfig
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -89,6 +103,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -1259,6 +1274,14 @@ fun StudioScreen(
                 }
             }
 
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // 6. EINZELBILDER & EBENEN (V1.1 Creative Fusion Expansion)
+            LayerAndVariantPanel(
+                uiState = uiState,
+                viewModel = viewModel
+            )
+
             Spacer(modifier = Modifier.height(18.dp))
 
             // Export Actions Section
@@ -1337,6 +1360,14 @@ fun StudioScreen(
         if (uiState.isAboutDialogOpen) {
             OrbitAboutDialog(
                 onDismiss = { viewModel.closeAboutDialog() }
+            )
+        }
+
+        // V1.1 Variante speichern Dialog
+        if (uiState.isSaveVariantDialogOpen) {
+            OrbitSaveVariantDialog(
+                onDismiss = { viewModel.closeSaveVariantDialog() },
+                onSave = { viewModel.saveCurrentVariant(it) }
             )
         }
     }
@@ -2128,6 +2159,7 @@ fun BlendModeSelector(
         ) {
             val modes = listOf(
                 OrbitBlendMode.WEIGHTED_AVERAGE,
+                OrbitBlendMode.SEQUENTIAL_LAYERS,
                 OrbitBlendMode.LIGHTEN,
                 OrbitBlendMode.MULTIPLY,
                 OrbitBlendMode.SCREEN,
@@ -2360,6 +2392,650 @@ fun RegistrationReportCard(
                         style = MaterialTheme.typography.bodySmall,
                         color = AmberAccent
                     )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun LayerAndVariantPanel(
+    uiState: StudioUiState,
+    viewModel: StudioViewModel
+) {
+    val project = uiState.activeProject ?: return
+    val orderedPaths = uiState.effectiveImageOrder
+    val selectedPath = uiState.selectedImagePath ?: orderedPaths.firstOrNull()
+
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = SlateDark900),
+        border = BorderStroke(1.dp, SlateDark700),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .testTag("panel_layers_variants")
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            // Header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Layers,
+                        contentDescription = null,
+                        tint = CyanAccent,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Einzelbilder & Ebenen",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        color = SlateWhite
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(SlateDark800)
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        text = "${project.activeCount}/${project.actualCount} aktiv",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = CyanAccent
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = "Individuelle Gewichtung, Deckkraft, Reihenfolge und künstlerische Varianten.",
+                style = MaterialTheme.typography.bodySmall,
+                color = SlateLight100.copy(alpha = 0.7f)
+            )
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // 1. Exposure Matching Toggle
+            Card(
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = SlateDark800),
+                border = BorderStroke(1.dp, if (uiState.exposureMatchEnabled) CyanAccent.copy(alpha = 0.5f) else SlateDark700),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Exposure,
+                            contentDescription = null,
+                            tint = if (uiState.exposureMatchEnabled) CyanNeon else SlateLight100.copy(alpha = 0.6f),
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column {
+                            Text(
+                                text = "Belichtung der Serie angleichen",
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                                color = SlateWhite
+                            )
+                            Text(
+                                text = "Gleicht Tonwertschwankungen sanft an das Referenzbild an",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SlateLight100.copy(alpha = 0.7f)
+                            )
+                        }
+                    }
+                    Switch(
+                        checked = uiState.exposureMatchEnabled,
+                        onCheckedChange = { viewModel.toggleExposureMatch(it) },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = CyanNeon,
+                            checkedTrackColor = CyanAccent.copy(alpha = 0.4f)
+                        ),
+                        modifier = Modifier.testTag("switch_exposure_match")
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // 2. Artistic Variants Bar
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Bookmark,
+                        contentDescription = null,
+                        tint = AmberAccent,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Künstlerische Varianten (${uiState.variants.size})",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                        color = SlateWhite
+                    )
+                }
+
+                Button(
+                    onClick = { viewModel.openSaveVariantDialog() },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = SlateDark800,
+                        contentColor = CyanAccent
+                    ),
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                    modifier = Modifier.testTag("btn_save_variant_open")
+                ) {
+                    Icon(Icons.Default.BookmarkAdd, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Neu speichern", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            if (uiState.variants.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(horizontal = 2.dp)
+                ) {
+                    items(uiState.variants) { variant ->
+                        val isActive = variant.id == uiState.activeVariantId
+                        Card(
+                            shape = RoundedCornerShape(10.dp),
+                            colors = CardDefaults.cardColors(containerColor = if (isActive) SlateDark700 else SlateDark800),
+                            border = BorderStroke(1.dp, if (isActive) CyanNeon else SlateDark700),
+                            modifier = Modifier
+                                .clickable { viewModel.applyVariant(variant.id) }
+                                .testTag("variant_item_${variant.id}")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (isActive) {
+                                    Icon(
+                                        imageVector = Icons.Default.Star,
+                                        contentDescription = null,
+                                        tint = CyanNeon,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                }
+                                Column {
+                                    Text(
+                                        text = variant.name,
+                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                        color = if (isActive) SlateWhite else SlateLight100
+                                    )
+                                    Text(
+                                        text = "${variant.artStyle.title} · ${variant.blendMode.title}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = SlateLight100.copy(alpha = 0.6f),
+                                        fontSize = 10.sp
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                IconButton(
+                                    onClick = { viewModel.duplicateVariant(variant.id) },
+                                    modifier = Modifier.size(24.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ContentCopy,
+                                        contentDescription = "Duplizieren",
+                                        tint = SlateLight100.copy(alpha = 0.6f),
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
+                                IconButton(
+                                    onClick = { viewModel.deleteVariant(variant.id) },
+                                    modifier = Modifier.size(24.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Delete,
+                                        contentDescription = "Löschen",
+                                        tint = SlateLight100.copy(alpha = 0.5f),
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // 3. Filmstrip of Ordered Layers
+            Text(
+                text = "Ebenen-Reihenfolge (Tippen zur Bearbeitung)",
+                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                color = SlateWhite
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(horizontal = 2.dp),
+                modifier = Modifier.fillMaxWidth().testTag("layers_filmstrip")
+            ) {
+                itemsIndexed(orderedPaths) { idx, path ->
+                    val isSelected = (path == selectedPath)
+                    val isRef = (idx == uiState.selectedRefIndex || path == project.imagePaths.getOrNull(uiState.selectedRefIndex))
+                    val isDisabled = path in uiState.disabledImagePaths
+                    val weight = uiState.imageWeights[path] ?: 1.0f
+                    val opacity = uiState.layerOpacities[path] ?: (1.0f / (idx + 1f).coerceAtLeast(1f))
+
+                    Card(
+                        shape = RoundedCornerShape(8.dp),
+                        colors = CardDefaults.cardColors(containerColor = SlateDark800),
+                        border = BorderStroke(
+                            width = if (isSelected) 2.dp else 1.dp,
+                            color = when {
+                                isSelected -> CyanNeon
+                                isRef -> AmberAccent
+                                else -> SlateDark700
+                            }
+                        ),
+                        modifier = Modifier
+                            .width(88.dp)
+                            .clickable { viewModel.selectImage(path) }
+                            .testTag("layer_thumb_$idx")
+                    ) {
+                        Column(modifier = Modifier.padding(4.dp)) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(60.dp)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(SlateDark950),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                val thumbBmp = remember(path) {
+                                    BitmapUtils.decodeSampledBitmap(path, 120, 120)
+                                }
+                                if (thumbBmp != null) {
+                                    Image(
+                                        bitmap = thumbBmp.asImageBitmap(),
+                                        contentDescription = "Ebene ${idx + 1}",
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize().alpha(if (isDisabled) 0.35f else 1.0f)
+                                    )
+                                } else {
+                                    Icon(
+                                        Icons.Default.Layers,
+                                        contentDescription = null,
+                                        tint = SlateLight100.copy(alpha = 0.4f),
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                }
+
+                                if (isRef) {
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.TopStart)
+                                            .padding(3.dp)
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .background(AmberAccent)
+                                            .padding(horizontal = 4.dp, vertical = 2.dp)
+                                    ) {
+                                        Text("REF", fontSize = 8.sp, fontWeight = FontWeight.Bold, color = SlateDark950)
+                                    }
+                                }
+
+                                if (isDisabled) {
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.Center)
+                                            .clip(CircleShape)
+                                            .background(SlateDark950.copy(alpha = 0.8f))
+                                            .padding(4.dp)
+                                    ) {
+                                        Icon(Icons.Default.VisibilityOff, contentDescription = "Deaktiviert", tint = AmberAccent, modifier = Modifier.size(16.dp))
+                                    }
+                                }
+
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.BottomEnd)
+                                        .padding(3.dp)
+                                        .clip(RoundedCornerShape(3.dp))
+                                        .background(SlateDark950.copy(alpha = 0.75f))
+                                        .padding(horizontal = 3.dp, vertical = 1.dp)
+                                ) {
+                                    Text("${idx + 1}", fontSize = 9.sp, color = SlateWhite)
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "G:${(weight * 100).roundToInt()}%",
+                                    fontSize = 9.sp,
+                                    color = CyanAccent,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "D:${(opacity * 100).roundToInt()}%",
+                                    fontSize = 9.sp,
+                                    color = SlateLight100.copy(alpha = 0.8f)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 4. Selected Layer Inspector
+            if (selectedPath != null) {
+                val selectedIdx = orderedPaths.indexOf(selectedPath).coerceAtLeast(0)
+                val isSelectedRef = (selectedIdx == uiState.selectedRefIndex || selectedPath == project.imagePaths.getOrNull(uiState.selectedRefIndex))
+                val isSelectedDisabled = selectedPath in uiState.disabledImagePaths
+                val curWeight = uiState.imageWeights[selectedPath] ?: 1.0f
+                val curOpacity = uiState.layerOpacities[selectedPath] ?: (1.0f / (selectedIdx + 1f).coerceAtLeast(1f))
+
+                Spacer(modifier = Modifier.height(12.dp))
+                Card(
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = SlateDark800),
+                    border = BorderStroke(1.dp, CyanNeon.copy(alpha = 0.35f)),
+                    modifier = Modifier.fillMaxWidth().testTag("layer_inspector")
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Ebene #${selectedIdx + 1} anpassen",
+                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                color = CyanNeon
+                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                IconButton(
+                                    onClick = { viewModel.moveImageUp(selectedPath) },
+                                    enabled = selectedIdx > 0,
+                                    modifier = Modifier.size(32.dp).testTag("btn_layer_move_up")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ArrowUpward,
+                                        contentDescription = "Vor",
+                                        tint = if (selectedIdx > 0) CyanAccent else SlateLight100.copy(alpha = 0.2f),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                                IconButton(
+                                    onClick = { viewModel.moveImageDown(selectedPath) },
+                                    enabled = selectedIdx < orderedPaths.size - 1,
+                                    modifier = Modifier.size(32.dp).testTag("btn_layer_move_down")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ArrowDownward,
+                                        contentDescription = "Zurück",
+                                        tint = if (selectedIdx < orderedPaths.size - 1) CyanAccent else SlateLight100.copy(alpha = 0.2f),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        // Weight Slider (0 - 100%)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Bildgewichtung: ${(curWeight * 100).roundToInt()}%",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SlateLight100
+                            )
+                            Text(
+                                text = if (curWeight == 0f) "Stumm" else if (curWeight >= 1.5f) "Maximal" else "Normal",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = CyanAccent
+                            )
+                        }
+                        Slider(
+                            value = curWeight,
+                            onValueChange = { viewModel.setImageWeight(selectedPath, it) },
+                            valueRange = 0f..1.5f,
+                            colors = SliderDefaults.colors(thumbColor = CyanAccent, activeTrackColor = CyanAccent),
+                            modifier = Modifier.fillMaxWidth().testTag("slider_layer_weight")
+                        )
+
+                        // Opacity Slider (0 - 100%)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Deckkraft (Alpha-Überlagerung): ${(curOpacity * 100).roundToInt()}%",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SlateLight100
+                            )
+                            Text(
+                                text = if (uiState.blendMode == OrbitBlendMode.SEQUENTIAL_LAYERS) "Aktiv im Sequenzmodus" else "Vorbereitet",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (uiState.blendMode == OrbitBlendMode.SEQUENTIAL_LAYERS) CyanNeon else SlateLight100.copy(alpha = 0.6f)
+                            )
+                        }
+                        Slider(
+                            value = curOpacity,
+                            onValueChange = { viewModel.setLayerOpacity(selectedPath, it) },
+                            valueRange = 0.05f..1.0f,
+                            colors = SliderDefaults.colors(thumbColor = CyanNeon, activeTrackColor = CyanNeon),
+                            modifier = Modifier.fillMaxWidth().testTag("slider_layer_opacity")
+                        )
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    val origIdx = project.imagePaths.indexOf(selectedPath)
+                                    if (origIdx >= 0) viewModel.selectReferenceIndex(origIdx)
+                                },
+                                enabled = !isSelectedRef,
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = if (isSelectedRef) AmberAccent else SlateLight100
+                                ),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.weight(1f).testTag("btn_layer_set_ref")
+                            ) {
+                                Icon(Icons.Default.Star, contentDescription = null, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(if (isSelectedRef) "Referenz ★" else "Als Referenz", fontSize = 11.sp)
+                            }
+
+                            OutlinedButton(
+                                onClick = { viewModel.toggleImageDisabled(selectedPath) },
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = if (isSelectedDisabled) AmberAccent else SlateLight100
+                                ),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.weight(1f).testTag("btn_layer_toggle_active")
+                            ) {
+                                Icon(
+                                    if (isSelectedDisabled) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(if (isSelectedDisabled) "Aktivieren" else "Ausblenden", fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // 5. Global Layer Order Reorder Actions
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                OutlinedButton(
+                    onClick = { viewModel.reverseImageOrder() },
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = SlateLight100),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.weight(1f).testTag("btn_order_reverse")
+                ) {
+                    Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(14.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Umkehren", fontSize = 11.sp)
+                }
+
+                OutlinedButton(
+                    onClick = { viewModel.shuffleImageOrder() },
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = SlateLight100),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.weight(1f).testTag("btn_order_shuffle")
+                ) {
+                    Icon(Icons.Default.Shuffle, contentDescription = null, modifier = Modifier.size(14.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Mischen", fontSize = 11.sp)
+                }
+
+                OutlinedButton(
+                    onClick = { viewModel.resetImageOrder() },
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = SlateLight100),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.weight(1f).testTag("btn_order_reset")
+                ) {
+                    Icon(Icons.Default.RestartAlt, contentDescription = null, modifier = Modifier.size(14.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Aufnahme", fontSize = 11.sp)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // 6. Surprise Mix Layer Variation Toggle
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Ebenen & Gewichte im Mix variieren",
+                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                        color = SlateWhite
+                    )
+                    Text(
+                        text = "Mischt beim Überraschungs-Mix zusätzlich Ebenen und Gewichte",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = SlateLight100.copy(alpha = 0.6f)
+                    )
+                }
+                Switch(
+                    checked = uiState.includeLayersInSurpriseMix,
+                    onCheckedChange = { viewModel.toggleIncludeLayersInSurpriseMix(it) },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = CyanNeon,
+                        checkedTrackColor = CyanAccent.copy(alpha = 0.4f)
+                    ),
+                    modifier = Modifier.testTag("switch_surprise_layers")
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun OrbitSaveVariantDialog(
+    onDismiss: () -> Unit,
+    onSave: (String) -> Unit
+) {
+    var name by remember { mutableStateOf("") }
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = SlateDark900),
+            shape = RoundedCornerShape(16.dp),
+            border = BorderStroke(1.dp, CyanNeon.copy(alpha = 0.5f)),
+            modifier = Modifier.padding(16.dp)
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Text(
+                    text = "Bildvariante speichern",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    color = SlateWhite
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Speichert die aktuellen Bildparameter, Fusionsstile, Ebenenreihenfolgen und individuellen Gewichte ab.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SlateLight100.copy(alpha = 0.8f)
+                )
+                Spacer(modifier = Modifier.height(14.dp))
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    placeholder = {
+                        Text(
+                            text = "Name (z. B. 'Expressiver Kontrast')",
+                            color = SlateLight100.copy(alpha = 0.4f)
+                        )
+                    },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = SlateWhite,
+                        unfocusedTextColor = SlateWhite,
+                        focusedBorderColor = CyanAccent,
+                        unfocusedBorderColor = SlateDark700
+                    ),
+                    modifier = Modifier.fillMaxWidth().testTag("input_variant_name")
+                )
+                Spacer(modifier = Modifier.height(18.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = SlateLight100),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("Abbrechen")
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Button(
+                        onClick = { onSave(name) },
+                        colors = ButtonDefaults.buttonColors(containerColor = CyanAccent, contentColor = SlateDark950),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.testTag("btn_confirm_save_variant")
+                    ) {
+                        Text("Speichern", fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         }

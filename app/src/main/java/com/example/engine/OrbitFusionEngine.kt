@@ -75,6 +75,9 @@ object OrbitFusionEngine {
         maskFeather: Float = 30f,
         maskIntensity: Float = 60f,
         projectId: String? = null,
+        imageWeights: Map<String, Float> = emptyMap(),
+        layerOpacities: Map<String, Float> = emptyMap(),
+        exposureMatchEnabled: Boolean = false,
         onProgress: (FusionProgress) -> Unit = {}
     ): Bitmap? = withContext(Dispatchers.Default) {
         val renderStartTime = System.currentTimeMillis()
@@ -91,17 +94,22 @@ object OrbitFusionEngine {
         // Compute weights based on art style, composition strategy, subject stability, and abstraction
         val weights = calculateStyleWeights(totalImages, safeRefIndex, artStyle, compositionStrategy, styleParams)
 
+        // Compute exposure compensation gains if enabled
+        val exposureGains = if (exposureMatchEnabled) {
+            BitmapUtils.computeExposureGains(validPaths, safeRefIndex)
+        } else emptyMap()
+
         val outWidth = targetWidth
         val outHeight = targetHeight
         val isPreview = (outWidth <= 1080 && outHeight <= 1080 && projectId != null)
 
         return@withContext try {
-            val accumR = FloatArray(outWidth * outHeight)
-            val accumG = FloatArray(outWidth * outHeight)
-            val accumB = FloatArray(outWidth * outHeight)
-            val accumWeight = FloatArray(outWidth * outHeight)
+            var accumR: FloatArray? = FloatArray(outWidth * outHeight)
+            var accumG: FloatArray? = FloatArray(outWidth * outHeight)
+            var accumB: FloatArray? = FloatArray(outWidth * outHeight)
+            var accumWeight: FloatArray? = FloatArray(outWidth * outHeight)
 
-            val tempPixels = IntArray(outWidth * outHeight)
+            var tempPixels: IntArray? = IntArray(outWidth * outHeight)
 
             // Determine discrete echo frame indices across the series
             val echoCountInt = styleParams.echoCount.roundToInt().coerceIn(3, 12)
@@ -109,17 +117,21 @@ object OrbitFusionEngine {
             val hasEchoes = (styleParams.echoStrength > 10f && echoIndices.isNotEmpty())
 
             // Allocate secondary echo accumulator only if echo contours are enabled to conserve memory
-            val echoAccumR = if (hasEchoes) FloatArray(outWidth * outHeight) else null
-            val echoAccumG = if (hasEchoes) FloatArray(outWidth * outHeight) else null
-            val echoAccumB = if (hasEchoes) FloatArray(outWidth * outHeight) else null
-            val echoAccumWeight = if (hasEchoes) FloatArray(outWidth * outHeight) else null
+            var echoAccumR: FloatArray? = if (hasEchoes) FloatArray(outWidth * outHeight) else null
+            var echoAccumG: FloatArray? = if (hasEchoes) FloatArray(outWidth * outHeight) else null
+            var echoAccumB: FloatArray? = if (hasEchoes) FloatArray(outWidth * outHeight) else null
+            var echoAccumWeight: FloatArray? = if (hasEchoes) FloatArray(outWidth * outHeight) else null
 
             for (i in validPaths.indices) {
                 coroutineContext.ensureActive()
                 val path = validPaths[i]
-                val weight = weights[i]
+                val baseWeight = weights[i]
+                val customWeight = (imageWeights[path] ?: 1.0f).coerceIn(0f, 2.0f)
+                val effectiveWeight = baseWeight * customWeight
 
                 onProgress(FusionProgress(i + 1, totalImages, "${artStyle.title}: Überlagere Perspektive ${i + 1}/$totalImages..."))
+
+                val currentPixels = tempPixels ?: break
 
                 // Check preview LRU cache first to avoid repeated disk reads and JPEG decodes during slider adjustments
                 val cachedPixels = if (isPreview && projectId != null) {
@@ -128,30 +140,40 @@ object OrbitFusionEngine {
 
                 if (cachedPixels != null) {
                     OrbitPerformanceTracker.recordCacheHit()
-                    System.arraycopy(cachedPixels, 0, tempPixels, 0, tempPixels.size)
+                    System.arraycopy(cachedPixels, 0, currentPixels, 0, currentPixels.size)
                 } else {
                     if (isPreview) OrbitPerformanceTracker.recordCacheMiss()
                     // Decode single image sampled to requested dimensions
                     val sourceBitmap = BitmapUtils.decodeSampledBitmap(path, outWidth, outHeight) ?: continue
                     val fittedBitmap = BitmapUtils.cropCenterFit(sourceBitmap, outWidth, outHeight)
-                    fittedBitmap.getPixels(tempPixels, 0, outWidth, 0, 0, outWidth, outHeight)
+                    fittedBitmap.getPixels(currentPixels, 0, outWidth, 0, 0, outWidth, outHeight)
                     fittedBitmap.recycle()
 
-                    // Store fitted preview pixels in bounded cache
+                    // Store fitted preview pixels in bounded cache (uncorrected)
                     if (isPreview && projectId != null) {
-                        OrbitPreviewCache.put(projectId, path, outWidth, outHeight, tempPixels.clone())
+                        OrbitPreviewCache.put(projectId, path, outWidth, outHeight, currentPixels.clone())
+                    }
+                }
+
+                // Non-destructively apply exposure compensation gain if active
+                if (exposureMatchEnabled) {
+                    val expGain = exposureGains[path] ?: 1.0f
+                    if (abs(expGain - 1.0f) > 0.02f) {
+                        for (pIdx in currentPixels.indices) {
+                            val c = currentPixels[pIdx]
+                            val r = (((c shr 16) and 0xFF) * expGain).roundToInt().coerceIn(0, 255)
+                            val g = (((c shr 8) and 0xFF) * expGain).roundToInt().coerceIn(0, 255)
+                            val b = ((c and 0xFF) * expGain).roundToInt().coerceIn(0, 255)
+                            currentPixels[pIdx] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+                        }
                     }
                 }
 
                 // Calculate shift: combine global offset, individual shift, and perspective spread
                 val isReference = (i == safeRefIndex)
-                // Map original image index if shifts are indexed by original list
                 val origIndex = imagePaths.indexOf(path)
                 val indShift = individualShifts[origIndex] ?: individualShifts[i] ?: Pair(0f, 0f)
 
-                // Perspective spread:
-                // When artisticSpreadEnabled is FALSE: strictly use genuine photographic displacement
-                // When artisticSpreadEnabled is TRUE: apply algorithmic trigonometric spread around the anchor
                 val spreadFactor = if (artisticSpreadEnabled) (styleParams.perspectiveSpread / 100f) * (outWidth / 180f) else 0f
                 val spreadOffsetX: Float
                 val spreadOffsetY: Float
@@ -171,7 +193,6 @@ object OrbitFusionEngine {
                     spreadOffsetY = 0f
                 }
 
-                // Motion flow creates directional shift along series sequence
                 val motionOffsetX = if (artStyle == OrbitArtStyle.MOTION_FLOW) {
                     (i - safeRefIndex).toFloat() * (styleParams.motionStrength / 100f) * 5.0f
                 } else 0f
@@ -186,51 +207,64 @@ object OrbitFusionEngine {
                 val shiftX = totalShiftX.roundToInt()
                 val shiftY = totalShiftY.roundToInt()
 
-                // Accumulate pixels based on art style specific fusion strategy and blend mode
-                when (artStyle) {
-                    OrbitArtStyle.IN_THE_ROUND -> {
-                        accumulateInTheRound(
-                            tempPixels, accumR, accumG, accumB, accumWeight,
-                            outWidth, outHeight, weight, shiftX, shiftY, isReference, compositionStrategy, styleParams,
-                            blendMode, anchorX, anchorY, maskEnabled, maskRadius, maskFeather, maskIntensity
-                        )
-                    }
-                    OrbitArtStyle.IMPRESSIONIST -> {
-                        accumulateImpressionist(
-                            tempPixels, accumR, accumG, accumB, accumWeight,
-                            outWidth, outHeight, weight, shiftX, shiftY, isReference, styleParams, blendMode
-                        )
-                    }
-                    OrbitArtStyle.ARCHITECTURAL -> {
-                        accumulateArchitectural(
-                            tempPixels, accumR, accumG, accumB, accumWeight,
-                            outWidth, outHeight, weight, shiftX, shiftY, isReference, styleParams, blendMode
-                        )
-                    }
-                    OrbitArtStyle.ETHEREAL -> {
-                        accumulateEthereal(
-                            tempPixels, accumR, accumG, accumB, accumWeight,
-                            outWidth, outHeight, weight, shiftX, shiftY, isReference, styleParams, blendMode
-                        )
-                    }
-                    OrbitArtStyle.MOTION_FLOW -> {
-                        accumulateMotionFlow(
-                            tempPixels, accumR, accumG, accumB, accumWeight,
-                            outWidth, outHeight, weight, shiftX, shiftY, isReference, styleParams, blendMode
-                        )
-                    }
-                    OrbitArtStyle.URBAN_LAYERS -> {
-                        accumulateUrbanLayers(
-                            tempPixels, accumR, accumG, accumB, accumWeight,
-                            outWidth, outHeight, weight, shiftX, shiftY, isReference, styleParams, blendMode
-                        )
+                val accR = accumR ?: break
+                val accG = accumG ?: break
+                val accB = accumB ?: break
+                val accW = accumWeight ?: break
+
+                if (blendMode == OrbitBlendMode.SEQUENTIAL_LAYERS) {
+                    val customAlpha = layerOpacities[path] ?: (1.0f / (i + 1f).coerceAtLeast(1f))
+                    val effectiveAlpha = (customAlpha * customWeight).coerceIn(0f, 1f)
+                    accumulateSequential(
+                        currentPixels, accR, accG, accB, accW,
+                        outWidth, outHeight, i, effectiveAlpha, shiftX, shiftY
+                    )
+                } else {
+                    when (artStyle) {
+                        OrbitArtStyle.IN_THE_ROUND -> {
+                            accumulateInTheRound(
+                                currentPixels, accR, accG, accB, accW,
+                                outWidth, outHeight, effectiveWeight, shiftX, shiftY, isReference, compositionStrategy, styleParams,
+                                blendMode, anchorX, anchorY, maskEnabled, maskRadius, maskFeather, maskIntensity
+                            )
+                        }
+                        OrbitArtStyle.IMPRESSIONIST -> {
+                            accumulateImpressionist(
+                                currentPixels, accR, accG, accB, accW,
+                                outWidth, outHeight, effectiveWeight, shiftX, shiftY, isReference, styleParams, blendMode
+                            )
+                        }
+                        OrbitArtStyle.ARCHITECTURAL -> {
+                            accumulateArchitectural(
+                                currentPixels, accR, accG, accB, accW,
+                                outWidth, outHeight, effectiveWeight, shiftX, shiftY, isReference, styleParams, blendMode
+                            )
+                        }
+                        OrbitArtStyle.ETHEREAL -> {
+                            accumulateEthereal(
+                                currentPixels, accR, accG, accB, accW,
+                                outWidth, outHeight, effectiveWeight, shiftX, shiftY, isReference, styleParams, blendMode
+                            )
+                        }
+                        OrbitArtStyle.MOTION_FLOW -> {
+                            accumulateMotionFlow(
+                                currentPixels, accR, accG, accB, accW,
+                                outWidth, outHeight, effectiveWeight, shiftX, shiftY, isReference, styleParams, blendMode
+                            )
+                        }
+                        OrbitArtStyle.URBAN_LAYERS -> {
+                            accumulateUrbanLayers(
+                                currentPixels, accR, accG, accB, accW,
+                                outWidth, outHeight, effectiveWeight, shiftX, shiftY, isReference, styleParams, blendMode
+                            )
+                        }
                     }
                 }
 
                 // If this is one of the chosen key perspective echo frames, capture its contour layer
                 if (i in echoIndices && !isReference && hasEchoes && echoAccumR != null && echoAccumG != null && echoAccumB != null && echoAccumWeight != null) {
                     accumulateEchoContours(
-                        tempPixels, echoAccumR, echoAccumG, echoAccumB, echoAccumWeight,
+                        currentPixels, echoAccumR, echoAccumG, echoAccumB, echoAccumWeight,
                         outWidth, outHeight, shiftX, shiftY, styleParams
                     )
                 }
@@ -242,8 +276,13 @@ object OrbitFusionEngine {
             val outputPixels = IntArray(outWidth * outHeight)
             val echoWeightNormalized = (styleParams.echoStrength / 100f) * 0.48f
 
+            val curAccR = accumR ?: return@withContext null
+            val curAccG = accumG ?: return@withContext null
+            val curAccB = accumB ?: return@withContext null
+            val curAccW = accumWeight ?: return@withContext null
+
             for (idx in outputPixels.indices) {
-                val w = accumWeight[idx]
+                val w = curAccW[idx]
                 var r = 0f
                 var g = 0f
                 var b = 0f
@@ -251,26 +290,24 @@ object OrbitFusionEngine {
                 if (w > 0f) {
                     when (blendMode) {
                         OrbitBlendMode.LIGHTEN, OrbitBlendMode.LIGHTEN_ADDITIVE -> {
-                            r = accumR[idx]
-                            g = accumG[idx]
-                            b = accumB[idx]
+                            r = curAccR[idx]
+                            g = curAccG[idx]
+                            b = curAccB[idx]
                         }
                         OrbitBlendMode.MULTIPLY, OrbitBlendMode.MULTIPLY_DENSITY -> {
-                            // Exposure-compensated logarithmic product (geometric mean)
-                            r = (exp(accumR[idx] / w) * 0.95f).coerceIn(0f, 255f)
-                            g = (exp(accumG[idx] / w) * 0.95f).coerceIn(0f, 255f)
-                            b = (exp(accumB[idx] / w) * 0.95f).coerceIn(0f, 255f)
+                            r = (exp(curAccR[idx] / w) * 0.95f).coerceIn(0f, 255f)
+                            g = (exp(curAccG[idx] / w) * 0.95f).coerceIn(0f, 255f)
+                            b = (exp(curAccB[idx] / w) * 0.95f).coerceIn(0f, 255f)
                         }
                         OrbitBlendMode.SCREEN -> {
-                            // Exposure-compensated screen inversion
-                            r = ((1f - exp(accumR[idx] / w)).coerceIn(0f, 1f) * 255f).coerceIn(0f, 255f)
-                            g = ((1f - exp(accumG[idx] / w)).coerceIn(0f, 1f) * 255f).coerceIn(0f, 255f)
-                            b = ((1f - exp(accumB[idx] / w)).coerceIn(0f, 1f) * 255f).coerceIn(0f, 255f)
+                            r = ((1f - exp(curAccR[idx] / w)).coerceIn(0f, 1f) * 255f).coerceIn(0f, 255f)
+                            g = ((1f - exp(curAccG[idx] / w)).coerceIn(0f, 1f) * 255f).coerceIn(0f, 255f)
+                            b = ((1f - exp(curAccB[idx] / w)).coerceIn(0f, 1f) * 255f).coerceIn(0f, 255f)
                         }
-                        OrbitBlendMode.WEIGHTED_AVERAGE, OrbitBlendMode.DRIFT_FLOW -> {
-                            r = (accumR[idx] / w).coerceIn(0f, 255f)
-                            g = (accumG[idx] / w).coerceIn(0f, 255f)
-                            b = (accumB[idx] / w).coerceIn(0f, 255f)
+                        OrbitBlendMode.WEIGHTED_AVERAGE, OrbitBlendMode.DRIFT_FLOW, OrbitBlendMode.SEQUENTIAL_LAYERS -> {
+                            r = (curAccR[idx] / w).coerceIn(0f, 255f)
+                            g = (curAccG[idx] / w).coerceIn(0f, 255f)
+                            b = (curAccB[idx] / w).coerceIn(0f, 255f)
                         }
                     }
                 }
@@ -282,13 +319,26 @@ object OrbitFusionEngine {
                     val eg = echoAccumG[idx] / ew
                     val eb = echoAccumB[idx] / ew
 
-                    // Overlay high-frequency perspective contours
                     r = (r * (1f - echoWeightNormalized) + er * echoWeightNormalized).coerceIn(0f, 255f)
                     g = (g * (1f - echoWeightNormalized) + eg * echoWeightNormalized).coerceIn(0f, 255f)
                     b = (b * (1f - echoWeightNormalized) + eb * echoWeightNormalized).coerceIn(0f, 255f)
                 }
 
                 outputPixels[idx] = (0xFF shl 24) or (r.roundToInt() shl 16) or (g.roundToInt() shl 8) or b.roundToInt()
+            }
+
+            // Memory optimization: Free large temporary accumulator buffers immediately to make room for Bitmap creation
+            accumR = null
+            accumG = null
+            accumB = null
+            accumWeight = null
+            echoAccumR = null
+            echoAccumG = null
+            echoAccumB = null
+            echoAccumWeight = null
+            tempPixels = null
+            if (outWidth >= 3072 || outHeight >= 3072) {
+                System.gc()
             }
 
             // Apply advanced post-processing:
@@ -306,6 +356,63 @@ object OrbitFusionEngine {
             System.gc()
             oom.printStackTrace()
             null
+        }
+    }
+
+    private fun accumulateSequential(
+        pixels: IntArray,
+        accR: FloatArray, accG: FloatArray, accB: FloatArray, accW: FloatArray,
+        w: Int, h: Int,
+        layerIndex: Int,
+        alpha: Float,
+        shiftX: Int, shiftY: Int
+    ) {
+        val minY = max(0, shiftY)
+        val maxY = min(h, h + shiftY)
+        val minX = max(0, shiftX)
+        val maxX = min(w, w + shiftX)
+        if (minY >= maxY || minX >= maxX) return
+
+        if (layerIndex == 0) {
+            for (y in minY until maxY) {
+                val srcYOffset = (y - shiftY) * w
+                val yOffset = y * w
+                for (x in minX until maxX) {
+                    val srcIdx = srcYOffset + (x - shiftX)
+                    val destIdx = yOffset + x
+                    val color = pixels[srcIdx]
+                    accR[destIdx] = ((color shr 16) and 0xFF).toFloat()
+                    accG[destIdx] = ((color shr 8) and 0xFF).toFloat()
+                    accB[destIdx] = (color and 0xFF).toFloat()
+                    accW[destIdx] = 1f
+                }
+            }
+        } else {
+            val a = alpha.coerceIn(0f, 1f)
+            val oneMinusA = 1f - a
+            for (y in minY until maxY) {
+                val srcYOffset = (y - shiftY) * w
+                val yOffset = y * w
+                for (x in minX until maxX) {
+                    val srcIdx = srcYOffset + (x - shiftX)
+                    val destIdx = yOffset + x
+                    val color = pixels[srcIdx]
+                    val r = ((color shr 16) and 0xFF).toFloat()
+                    val g = ((color shr 8) and 0xFF).toFloat()
+                    val b = (color and 0xFF).toFloat()
+
+                    if (accW[destIdx] > 0f) {
+                        accR[destIdx] = a * r + oneMinusA * accR[destIdx]
+                        accG[destIdx] = a * g + oneMinusA * accG[destIdx]
+                        accB[destIdx] = a * b + oneMinusA * accB[destIdx]
+                    } else {
+                        accR[destIdx] = r
+                        accG[destIdx] = g
+                        accB[destIdx] = b
+                        accW[destIdx] = 1f
+                    }
+                }
+            }
         }
     }
 
@@ -419,7 +526,7 @@ object OrbitFusionEngine {
                 accB[destIdx] += ln(max(0.001f, 1f - (b / 255f).coerceIn(0f, 0.999f))) * w
                 accW[destIdx] += w
             }
-            OrbitBlendMode.WEIGHTED_AVERAGE, OrbitBlendMode.DRIFT_FLOW -> {
+            OrbitBlendMode.WEIGHTED_AVERAGE, OrbitBlendMode.DRIFT_FLOW, OrbitBlendMode.SEQUENTIAL_LAYERS -> {
                 accR[destIdx] += r * w
                 accG[destIdx] += g * w
                 accB[destIdx] += b * w

@@ -321,6 +321,58 @@ object BitmapUtils {
 
         return result
     }
+
+    /**
+     * Estimates relative exposure compensation gains for a series of images
+     * normalized against the reference image's average luminance.
+     * Non-destructive, advisory and clamped to [0.55f, 1.80f].
+     */
+    fun computeExposureGains(imagePaths: List<String>, referenceIndex: Int): Map<String, Float> {
+        val gains = mutableMapOf<String, Float>()
+        if (imagePaths.isEmpty()) return gains
+        val safeRef = referenceIndex.coerceIn(0, imagePaths.size - 1)
+        val sampleDim = 64
+        val lums = mutableMapOf<String, Float>()
+
+        for (path in imagePaths) {
+            val file = java.io.File(path)
+            val bmp = if (file.exists()) {
+                try {
+                    decodeSampledBitmap(path, sampleDim, sampleDim)
+                } catch (t: Throwable) {
+                    null
+                }
+            } else null
+
+            if (bmp != null) {
+                val w = bmp.width
+                val h = bmp.height
+                val pixels = IntArray(w * h)
+                bmp.getPixels(pixels, 0, w, 0, 0, w, h)
+                bmp.recycle()
+                var sum = 0.0
+                for (p in pixels) {
+                    val r = (p shr 16) and 0xFF
+                    val g = (p shr 8) and 0xFF
+                    val b = p and 0xFF
+                    sum += 0.299 * r + 0.587 * g + 0.114 * b
+                }
+                lums[path] = (sum / (w * h)).toFloat().coerceAtLeast(10f)
+            } else {
+                lums[path] = 128f
+            }
+        }
+
+        val refPath = imagePaths[safeRef]
+        val refLum = lums[refPath] ?: 128f
+
+        for (path in imagePaths) {
+            val lum = lums[path] ?: 128f
+            val gain = (refLum / lum).coerceIn(0.55f, 1.80f)
+            gains[path] = gain
+        }
+        return gains
+    }
 }
 
 data class ImageQualityReport(

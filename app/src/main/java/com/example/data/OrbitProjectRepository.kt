@@ -116,6 +116,151 @@ class OrbitProjectRepository(private val context: Context) {
                     }
                 }
 
+                // V1.1 Creative Fusion Expansion fields
+                val customOrderList = mutableListOf<String>()
+                val customOrderArr = obj.optJSONArray("customImageOrder")
+                if (customOrderArr != null) {
+                    for (k in 0 until customOrderArr.length()) {
+                        customOrderList.add(customOrderArr.getString(k))
+                    }
+                }
+
+                val imageWeightsMap = mutableMapOf<String, Float>()
+                val weightsObj = obj.optJSONObject("imageWeights")
+                if (weightsObj != null) {
+                    val keys = weightsObj.keys()
+                    while (keys.hasNext()) {
+                        val key = keys.next()
+                        imageWeightsMap[key] = weightsObj.optDouble(key, 1.0).toFloat().coerceIn(0f, 1f)
+                    }
+                }
+
+                val layerOpacitiesMap = mutableMapOf<String, Float>()
+                val opacitiesObj = obj.optJSONObject("layerOpacities")
+                if (opacitiesObj != null) {
+                    val keys = opacitiesObj.keys()
+                    while (keys.hasNext()) {
+                        val key = keys.next()
+                        layerOpacitiesMap[key] = opacitiesObj.optDouble(key, 1.0).toFloat().coerceIn(0f, 1f)
+                    }
+                }
+
+                val exposureMatch = obj.optBoolean("exposureMatchEnabled", false)
+                val activeVariantId = obj.optString("activeVariantId", null).takeIf { it != "null" && it?.isNotBlank() == true }
+
+                val variantsList = mutableListOf<com.example.model.OrbitVariant>()
+                val variantsArr = obj.optJSONArray("variants")
+                if (variantsArr != null) {
+                    for (vIdx in 0 until variantsArr.length()) {
+                        val vObj = variantsArr.getJSONObject(vIdx)
+                        val vStyle = try {
+                            OrbitArtStyle.valueOf(vObj.optString("artStyle", OrbitArtStyle.IN_THE_ROUND.name))
+                        } catch (e: Exception) {
+                            OrbitArtStyle.IN_THE_ROUND
+                        }
+                        val vStrategy = try {
+                            OrbitCompositionStrategy.valueOf(vObj.optString("compositionStrategy", OrbitCompositionStrategy.SUBJECT_CENTERED.name))
+                        } catch (e: Exception) {
+                            OrbitCompositionStrategy.SUBJECT_CENTERED
+                        }
+                        val vBlend = OrbitBlendMode.fromString(vObj.optString("blendMode", OrbitBlendMode.WEIGHTED_AVERAGE.name))
+
+                        val vDisabledSet = mutableSetOf<String>()
+                        val vDisabledArr = vObj.optJSONArray("disabledImagePaths")
+                        if (vDisabledArr != null) {
+                            for (dk in 0 until vDisabledArr.length()) {
+                                vDisabledSet.add(vDisabledArr.getString(dk))
+                            }
+                        }
+
+                        val vOrderList = mutableListOf<String>()
+                        val vOrderArr = vObj.optJSONArray("customImageOrder")
+                        if (vOrderArr != null) {
+                            for (ok in 0 until vOrderArr.length()) {
+                                vOrderList.add(vOrderArr.getString(ok))
+                            }
+                        }
+
+                        val vWeightsMap = mutableMapOf<String, Float>()
+                        val vWeightsObj = vObj.optJSONObject("imageWeights")
+                        if (vWeightsObj != null) {
+                            val vKeys = vWeightsObj.keys()
+                            while (vKeys.hasNext()) {
+                                val vk = vKeys.next()
+                                vWeightsMap[vk] = vWeightsObj.optDouble(vk, 1.0).toFloat().coerceIn(0f, 1f)
+                            }
+                        }
+
+                        val vOpacitiesMap = mutableMapOf<String, Float>()
+                        val vOpacitiesObj = vObj.optJSONObject("layerOpacities")
+                        if (vOpacitiesObj != null) {
+                            val vKeys = vOpacitiesObj.keys()
+                            while (vKeys.hasNext()) {
+                                val vk = vKeys.next()
+                                vOpacitiesMap[vk] = vOpacitiesObj.optDouble(vk, 1.0).toFloat().coerceIn(0f, 1f)
+                            }
+                        }
+
+                        val vParamsObj = vObj.optJSONObject("styleParams")
+                        val vDef = vStyle.defaultParameters
+                        val vParams = if (vParamsObj != null) {
+                            OrbitStyleParameters(
+                                abstraction = vParamsObj.optDouble("abstraction", vDef.abstraction.toDouble()).toFloat(),
+                                subjectStability = vParamsObj.optDouble("subjectStability", vDef.subjectStability.toDouble()).toFloat(),
+                                colorIntensity = vParamsObj.optDouble("colorIntensity", vDef.colorIntensity.toDouble()).toFloat(),
+                                vibrance = vParamsObj.optDouble("vibrance", vDef.vibrance.toDouble()).toFloat(),
+                                contrast = vParamsObj.optDouble("contrast", vDef.contrast.toDouble()).toFloat(),
+                                edgeEmphasis = vParamsObj.optDouble("edgeEmphasis", vDef.edgeEmphasis.toDouble()).toFloat(),
+                                backgroundDissolve = vParamsObj.optDouble("backgroundDissolve", vDef.backgroundDissolve.toDouble()).toFloat(),
+                                echoStrength = vParamsObj.optDouble("echoStrength", vDef.echoStrength.toDouble()).toFloat(),
+                                echoCount = vParamsObj.optDouble("echoCount", vDef.echoCount.toDouble()).toFloat(),
+                                perspectiveSpread = vParamsObj.optDouble("perspectiveSpread", vDef.perspectiveSpread.toDouble()).toFloat(),
+                                colorDensity = vParamsObj.optDouble("colorDensity", vDef.colorDensity.toDouble()).toFloat(),
+                                warmth = vParamsObj.optDouble("warmth", vDef.warmth.toDouble()).toFloat(),
+                                lightGlow = vParamsObj.optDouble("lightGlow", vDef.lightGlow.toDouble()).toFloat(),
+                                shadowDepth = vParamsObj.optDouble("shadowDepth", vDef.shadowDepth.toDouble()).toFloat(),
+                                softness = vParamsObj.optDouble("softness", vDef.softness.toDouble()).toFloat(),
+                                motionStrength = vParamsObj.optDouble("motionStrength", vDef.motionStrength.toDouble()).toFloat(),
+                                detailDensity = vParamsObj.optDouble("detailDensity", vDef.detailDensity.toDouble()).toFloat(),
+                                atmosphere = vParamsObj.optDouble("atmosphere", vDef.atmosphere.toDouble()).toFloat(),
+                                blendStrength = vParamsObj.optDouble("blendStrength", vDef.blendStrength.toDouble()).toFloat(),
+                                artisticSpreadEnabled = vParamsObj.optBoolean("artisticSpreadEnabled", vDef.artisticSpreadEnabled),
+                                maskEnabled = vParamsObj.optBoolean("maskEnabled", vDef.maskEnabled),
+                                maskRadius = vParamsObj.optDouble("maskRadius", vDef.maskRadius.toDouble()).toFloat(),
+                                maskFeather = vParamsObj.optDouble("maskFeather", vDef.maskFeather.toDouble()).toFloat(),
+                                maskIntensity = vParamsObj.optDouble("maskIntensity", vDef.maskIntensity.toDouble()).toFloat()
+                            )
+                        } else vDef
+
+                        variantsList.add(
+                            com.example.model.OrbitVariant(
+                                id = vObj.getString("id"),
+                                name = vObj.getString("name"),
+                                createdAt = vObj.optLong("createdAt", System.currentTimeMillis()),
+                                artStyle = vStyle,
+                                compositionStrategy = vStrategy,
+                                blendMode = vBlend,
+                                styleParams = vParams,
+                                referenceImageIndex = vObj.optInt("referenceImageIndex", 0),
+                                disabledImagePaths = vDisabledSet,
+                                customImageOrder = vOrderList,
+                                imageWeights = vWeightsMap,
+                                layerOpacities = vOpacitiesMap,
+                                exposureMatchEnabled = vObj.optBoolean("exposureMatchEnabled", false),
+                                anchorX = vObj.optDouble("anchorX", 0.5).toFloat(),
+                                anchorY = vObj.optDouble("anchorY", 0.5).toFloat(),
+                                artisticSpreadEnabled = vObj.optBoolean("artisticSpreadEnabled", false),
+                                maskEnabled = vObj.optBoolean("maskEnabled", false),
+                                maskRadius = vObj.optDouble("maskRadius", 0.35).toFloat(),
+                                maskFeather = vObj.optDouble("maskFeather", 0.25).toFloat(),
+                                maskIntensity = vObj.optDouble("maskIntensity", 0.70).toFloat(),
+                                offsetX = vObj.optDouble("offsetX", 0.0).toFloat(),
+                                offsetY = vObj.optDouble("offsetY", 0.0).toFloat()
+                            )
+                        )
+                    }
+                }
+
                 val project = OrbitProject(
                     id = obj.getString("id"),
                     name = obj.getString("name"),
@@ -157,7 +302,13 @@ class OrbitProjectRepository(private val context: Context) {
                     maskEnabled = obj.optBoolean("maskEnabled", false),
                     maskRadius = obj.optDouble("maskRadius", 0.35).toFloat(),
                     maskFeather = obj.optDouble("maskFeather", 0.25).toFloat(),
-                    maskIntensity = obj.optDouble("maskIntensity", 0.70).toFloat()
+                    maskIntensity = obj.optDouble("maskIntensity", 0.70).toFloat(),
+                    customImageOrder = customOrderList,
+                    imageWeights = imageWeightsMap,
+                    layerOpacities = layerOpacitiesMap,
+                    exposureMatchEnabled = exposureMatch,
+                    variants = variantsList,
+                    activeVariantId = activeVariantId
                 )
                 list.add(project)
             }
@@ -233,6 +384,92 @@ class OrbitProjectRepository(private val context: Context) {
                     put("maskRadius", p.maskRadius.toDouble())
                     put("maskFeather", p.maskFeather.toDouble())
                     put("maskIntensity", p.maskIntensity.toDouble())
+
+                    // V1.1 Creative Fusion Expansion fields
+                    val orderArr = JSONArray()
+                    p.customImageOrder.forEach { orderArr.put(it) }
+                    put("customImageOrder", orderArr)
+
+                    val weightsObj = JSONObject()
+                    p.imageWeights.forEach { (k, v) -> weightsObj.put(k, v.toDouble()) }
+                    put("imageWeights", weightsObj)
+
+                    val opacitiesObj = JSONObject()
+                    p.layerOpacities.forEach { (k, v) -> opacitiesObj.put(k, v.toDouble()) }
+                    put("layerOpacities", opacitiesObj)
+
+                    put("exposureMatchEnabled", p.exposureMatchEnabled)
+                    put("activeVariantId", p.activeVariantId ?: JSONObject.NULL)
+
+                    val variantsArr = JSONArray()
+                    p.variants.forEach { v ->
+                        val vObj = JSONObject().apply {
+                            put("id", v.id)
+                            put("name", v.name)
+                            put("createdAt", v.createdAt)
+                            put("artStyle", v.artStyle.name)
+                            put("compositionStrategy", v.compositionStrategy.name)
+                            put("blendMode", v.blendMode.name)
+                            put("referenceImageIndex", v.referenceImageIndex)
+
+                            val vDisabledArr = JSONArray()
+                            v.disabledImagePaths.forEach { vDisabledArr.put(it) }
+                            put("disabledImagePaths", vDisabledArr)
+
+                            val vOrderArr = JSONArray()
+                            v.customImageOrder.forEach { vOrderArr.put(it) }
+                            put("customImageOrder", vOrderArr)
+
+                            val vWeightsObj = JSONObject()
+                            v.imageWeights.forEach { (vk, vv) -> vWeightsObj.put(vk, vv.toDouble()) }
+                            put("imageWeights", vWeightsObj)
+
+                            val vOpacitiesObj = JSONObject()
+                            v.layerOpacities.forEach { (vk, vv) -> vOpacitiesObj.put(vk, vv.toDouble()) }
+                            put("layerOpacities", vOpacitiesObj)
+
+                            put("exposureMatchEnabled", v.exposureMatchEnabled)
+                            put("anchorX", v.anchorX.toDouble())
+                            put("anchorY", v.anchorY.toDouble())
+                            put("artisticSpreadEnabled", v.artisticSpreadEnabled)
+                            put("maskEnabled", v.maskEnabled)
+                            put("maskRadius", v.maskRadius.toDouble())
+                            put("maskFeather", v.maskFeather.toDouble())
+                            put("maskIntensity", v.maskIntensity.toDouble())
+                            put("offsetX", v.offsetX.toDouble())
+                            put("offsetY", v.offsetY.toDouble())
+
+                            val vParamsObj = JSONObject().apply {
+                                put("abstraction", v.styleParams.abstraction.toDouble())
+                                put("subjectStability", v.styleParams.subjectStability.toDouble())
+                                put("colorIntensity", v.styleParams.colorIntensity.toDouble())
+                                put("vibrance", v.styleParams.vibrance.toDouble())
+                                put("contrast", v.styleParams.contrast.toDouble())
+                                put("edgeEmphasis", v.styleParams.edgeEmphasis.toDouble())
+                                put("backgroundDissolve", v.styleParams.backgroundDissolve.toDouble())
+                                put("echoStrength", v.styleParams.echoStrength.toDouble())
+                                put("echoCount", v.styleParams.echoCount.toDouble())
+                                put("perspectiveSpread", v.styleParams.perspectiveSpread.toDouble())
+                                put("colorDensity", v.styleParams.colorDensity.toDouble())
+                                put("warmth", v.styleParams.warmth.toDouble())
+                                put("lightGlow", v.styleParams.lightGlow.toDouble())
+                                put("shadowDepth", v.styleParams.shadowDepth.toDouble())
+                                put("softness", v.styleParams.softness.toDouble())
+                                put("motionStrength", v.styleParams.motionStrength.toDouble())
+                                put("detailDensity", v.styleParams.detailDensity.toDouble())
+                                put("atmosphere", v.styleParams.atmosphere.toDouble())
+                                put("blendStrength", v.styleParams.blendStrength.toDouble())
+                                put("artisticSpreadEnabled", v.styleParams.artisticSpreadEnabled)
+                                put("maskEnabled", v.styleParams.maskEnabled)
+                                put("maskRadius", v.styleParams.maskRadius.toDouble())
+                                put("maskFeather", v.styleParams.maskFeather.toDouble())
+                                put("maskIntensity", v.styleParams.maskIntensity.toDouble())
+                            }
+                            put("styleParams", vParamsObj)
+                        }
+                        variantsArr.put(vObj)
+                    }
+                    put("variants", variantsArr)
                 }
                 array.put(obj)
             }
@@ -353,6 +590,117 @@ class OrbitProjectRepository(private val context: Context) {
             }
         }
         return removed
+    }
+
+    fun saveVariant(projectId: String, variant: com.example.model.OrbitVariant): com.example.model.OrbitVariant? {
+        val project = getProject(projectId) ?: return null
+        val updatedVariants = project.variants + variant
+        val updatedProject = project.copy(
+            variants = updatedVariants,
+            activeVariantId = variant.id
+        )
+        updateProject(updatedProject)
+        return variant
+    }
+
+    fun saveVariant(projectId: String, variantName: String): com.example.model.OrbitVariant? {
+        val project = getProject(projectId) ?: return null
+        val newVariant = com.example.model.OrbitVariant(
+            name = variantName.ifBlank { "Variante ${project.variants.size + 1}" },
+            artStyle = project.artStyle,
+            compositionStrategy = project.compositionStrategy,
+            blendMode = project.blendMode,
+            styleParams = project.styleParams,
+            referenceImageIndex = project.referenceImageIndex,
+            disabledImagePaths = project.disabledImagePaths,
+            customImageOrder = project.customImageOrder,
+            imageWeights = project.imageWeights,
+            layerOpacities = project.layerOpacities,
+            exposureMatchEnabled = project.exposureMatchEnabled,
+            anchorX = project.anchorX,
+            anchorY = project.anchorY,
+            artisticSpreadEnabled = project.artisticSpreadEnabled,
+            maskEnabled = project.maskEnabled,
+            maskRadius = project.maskRadius,
+            maskFeather = project.maskFeather,
+            maskIntensity = project.maskIntensity,
+            offsetX = project.offsetX,
+            offsetY = project.offsetY
+        )
+        val updatedVariants = project.variants + newVariant
+        val updatedProject = project.copy(
+            variants = updatedVariants,
+            activeVariantId = newVariant.id
+        )
+        updateProject(updatedProject)
+        return newVariant
+    }
+
+    fun applyVariant(projectId: String, variantId: String): OrbitProject? {
+        val project = getProject(projectId) ?: return null
+        val variant = project.variants.firstOrNull { it.id == variantId } ?: return null
+        val updatedProject = project.copy(
+            activeVariantId = variant.id,
+            artStyle = variant.artStyle,
+            compositionStrategy = variant.compositionStrategy,
+            blendMode = variant.blendMode,
+            styleParams = variant.styleParams,
+            referenceImageIndex = variant.referenceImageIndex,
+            disabledImagePaths = variant.disabledImagePaths,
+            customImageOrder = variant.customImageOrder,
+            imageWeights = variant.imageWeights,
+            layerOpacities = variant.layerOpacities,
+            exposureMatchEnabled = variant.exposureMatchEnabled,
+            anchorX = variant.anchorX,
+            anchorY = variant.anchorY,
+            artisticSpreadEnabled = variant.artisticSpreadEnabled,
+            maskEnabled = variant.maskEnabled,
+            maskRadius = variant.maskRadius,
+            maskFeather = variant.maskFeather,
+            maskIntensity = variant.maskIntensity,
+            offsetX = variant.offsetX,
+            offsetY = variant.offsetY
+        )
+        updateProject(updatedProject)
+        return updatedProject
+    }
+
+    fun duplicateVariant(projectId: String, variantId: String): com.example.model.OrbitVariant? {
+        val project = getProject(projectId) ?: return null
+        val existing = project.variants.firstOrNull { it.id == variantId } ?: return null
+        val duplicate = existing.copy(
+            id = UUID.randomUUID().toString(),
+            name = "${existing.name} (Kopie)",
+            createdAt = System.currentTimeMillis()
+        )
+        val updatedProject = project.copy(
+            variants = project.variants + duplicate,
+            activeVariantId = duplicate.id
+        )
+        updateProject(updatedProject)
+        return duplicate
+    }
+
+    fun renameVariant(projectId: String, variantId: String, newName: String): OrbitProject? {
+        val project = getProject(projectId) ?: return null
+        val updated = project.variants.map {
+            if (it.id == variantId) it.copy(name = newName.ifBlank { it.name }) else it
+        }
+        val updatedProject = project.copy(variants = updated)
+        updateProject(updatedProject)
+        return updatedProject
+    }
+
+    fun deleteVariant(projectId: String, variantId: String): OrbitProject? {
+        val project = getProject(projectId) ?: return null
+        val updatedVariants = project.variants.filter { it.id != variantId }
+        val newActiveId = if (project.activeVariantId == variantId) updatedVariants.firstOrNull()?.id else project.activeVariantId
+        val updatedProject = project.copy(
+            variants = updatedVariants,
+            activeVariantId = newActiveId
+        )
+        updateProject(updatedProject)
+        return updatedProject
     }
 
     /**

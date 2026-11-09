@@ -199,4 +199,83 @@ class ExampleUnitTest {
         assertTrue(snap.usedHeapMb >= 0)
         assertTrue(snap.maxHeapMb > 0)
     }
+
+    @Test
+    fun orbitProject_v11Defaults_andCustomOrdering_areAccurate() {
+        val paths = listOf("/img1.jpg", "/img2.jpg", "/img3.jpg", "/img4.jpg")
+        val project = OrbitProject(
+            id = "proj-v11",
+            name = "Layers Test",
+            imagePaths = paths
+        )
+
+        // Defaults
+        assertTrue(project.customImageOrder.isEmpty())
+        assertTrue(project.imageWeights.isEmpty())
+        assertTrue(project.layerOpacities.isEmpty())
+        assertFalse(project.exposureMatchEnabled)
+        assertTrue(project.variants.isEmpty())
+        assertNull(project.activeVariantId)
+
+        // Natural order
+        assertEquals(paths, project.orderedImagePaths)
+        assertEquals(paths, project.orderedActiveImagePaths)
+
+        // Custom order
+        val reordered = project.copy(
+            customImageOrder = listOf("/img4.jpg", "/img2.jpg")
+        )
+        // /img4 and /img2 come first, remaining missing (/img1, /img3) are appended gracefully
+        assertEquals(listOf("/img4.jpg", "/img2.jpg", "/img1.jpg", "/img3.jpg"), reordered.orderedImagePaths)
+
+        // Custom order with disabled image
+        val withDisabled = reordered.copy(disabledImagePaths = setOf("/img2.jpg"))
+        assertEquals(listOf("/img4.jpg", "/img1.jpg", "/img3.jpg"), withDisabled.orderedActiveImagePaths)
+    }
+
+    @Test
+    fun orbitBlendMode_sequentialLayers_parsingAndProperties_areCorrect() {
+        assertEquals(OrbitBlendMode.SEQUENTIAL_LAYERS, OrbitBlendMode.fromString("SEQUENTIAL_LAYERS"))
+        assertEquals(OrbitBlendMode.SEQUENTIAL_LAYERS, OrbitBlendMode.fromString("SEQUENTIAL"))
+        assertEquals("Sequenzielle Ebenen", OrbitBlendMode.SEQUENTIAL_LAYERS.title)
+        assertTrue(OrbitBlendMode.SEQUENTIAL_LAYERS.description.contains("Alpha"))
+    }
+
+    @Test
+    fun orbitVariant_creationAndSerializationStructure_isCorrect() {
+        val variant = com.example.model.OrbitVariant(
+            name = "Hoher Kontrast",
+            artStyle = com.example.model.OrbitArtStyle.URBAN_LAYERS,
+            compositionStrategy = OrbitCompositionStrategy.STRUCTURAL_FIELD,
+            blendMode = OrbitBlendMode.SEQUENTIAL_LAYERS,
+            referenceImageIndex = 1,
+            customImageOrder = listOf("/b.jpg", "/a.jpg"),
+            imageWeights = mapOf("/b.jpg" to 0.8f, "/a.jpg" to 1.2f),
+            layerOpacities = mapOf("/b.jpg" to 0.6f, "/a.jpg" to 0.9f),
+            exposureMatchEnabled = true
+        )
+
+        assertEquals("Hoher Kontrast", variant.name)
+        assertEquals(com.example.model.OrbitArtStyle.URBAN_LAYERS, variant.artStyle)
+        assertEquals(OrbitCompositionStrategy.STRUCTURAL_FIELD, variant.compositionStrategy)
+        assertEquals(OrbitBlendMode.SEQUENTIAL_LAYERS, variant.blendMode)
+        assertEquals(1, variant.referenceImageIndex)
+        assertEquals(listOf("/b.jpg", "/a.jpg"), variant.customImageOrder)
+        assertEquals(0.8f, variant.imageWeights["/b.jpg"] ?: 0f, 0.001f)
+        assertEquals(0.6f, variant.layerOpacities["/b.jpg"] ?: 0f, 0.001f)
+        assertTrue(variant.exposureMatchEnabled)
+    }
+
+    @Test
+    fun orbitExposureGains_emptyAndFallback_handlesCleanly() {
+        val emptyGains = com.example.engine.BitmapUtils.computeExposureGains(emptyList(), 0)
+        assertTrue(emptyGains.isEmpty())
+
+        // Non-existent files fallback gracefully to gain 1.0f clamped
+        val testPaths = listOf("/nonexistent/a.jpg", "/nonexistent/b.jpg")
+        val gains = com.example.engine.BitmapUtils.computeExposureGains(testPaths, 0)
+        assertEquals(2, gains.size)
+        assertTrue(gains["/nonexistent/a.jpg"]!! in 0.55f..1.80f)
+        assertTrue(gains["/nonexistent/b.jpg"]!! in 0.55f..1.80f)
+    }
 }

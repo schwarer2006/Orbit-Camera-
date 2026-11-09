@@ -20,6 +20,7 @@ import com.example.model.OrbitExportRatio
 import com.example.model.OrbitExportSize
 import com.example.model.OrbitProject
 import com.example.model.OrbitStyleParameters
+import com.example.model.OrbitVariant
 import com.example.model.OrbitWorkspaceMode
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -68,6 +69,17 @@ data class StudioUiState(
     val exportedUri: Uri? = null,
     val message: String? = null,
 
+    // V1.1 Layer management, variants and exposure matching
+    val customImageOrder: List<String> = emptyList(),
+    val imageWeights: Map<String, Float> = emptyMap(),
+    val layerOpacities: Map<String, Float> = emptyMap(),
+    val exposureMatchEnabled: Boolean = false,
+    val selectedImagePath: String? = null,
+    val variants: List<OrbitVariant> = emptyList(),
+    val activeVariantId: String? = null,
+    val includeLayersInSurpriseMix: Boolean = false,
+    val isSaveVariantDialogOpen: Boolean = false,
+
     // Simple Quality Export
     val isExportDialogOpen: Boolean = false,
     val isExporting: Boolean = false,
@@ -82,6 +94,15 @@ data class StudioUiState(
 ) {
     val abstractionLevel: Float
         get() = styleParameters.abstraction
+
+    val effectiveImageOrder: List<String>
+        get() {
+            val proj = activeProject ?: return emptyList()
+            if (customImageOrder.isEmpty()) return proj.imagePaths
+            val valid = customImageOrder.filter { it in proj.imagePaths }
+            val missing = proj.imagePaths.filter { it !in valid }
+            return valid + missing
+        }
 }
 
 private data class RenderKey(
@@ -102,7 +123,11 @@ private data class RenderKey(
     val maskRadius: Float,
     val maskFeather: Float,
     val maskIntensity: Float,
-    val imageCount: Int
+    val imageCount: Int,
+    val customImageOrder: List<String>,
+    val imageWeights: Map<String, Float>,
+    val layerOpacities: Map<String, Float>,
+    val exposureMatchEnabled: Boolean
 )
 
 sealed class StudioEffect {
@@ -129,6 +154,9 @@ class StudioViewModel(
 
     private var undoStyleParameters: OrbitStyleParameters? = null
     private var undoCompositionStrategy: OrbitCompositionStrategy? = null
+    private var undoImageOrder: List<String>? = null
+    private var undoImageWeights: Map<String, Float>? = null
+    private var undoLayerOpacities: Map<String, Float>? = null
 
     init {
         viewModelScope.launch {
@@ -150,6 +178,8 @@ class StudioViewModel(
     fun selectProject(projectId: String) {
         val project = repository.getProject(projectId) ?: return
         val refIndex = project.referenceImageIndex.coerceIn(0, (project.actualCount - 1).coerceAtLeast(0))
+        val currentOrder = project.customImageOrder.ifEmpty { project.imagePaths }
+        val firstImg = currentOrder.firstOrNull()
 
         _uiState.value = _uiState.value.copy(
             activeProject = project,
@@ -170,6 +200,13 @@ class StudioViewModel(
             maskRadius = project.maskRadius,
             maskFeather = project.maskFeather,
             maskIntensity = project.maskIntensity,
+            customImageOrder = project.customImageOrder,
+            imageWeights = project.imageWeights,
+            layerOpacities = project.layerOpacities,
+            exposureMatchEnabled = project.exposureMatchEnabled,
+            variants = project.variants,
+            activeVariantId = project.activeVariantId,
+            selectedImagePath = firstImg,
             individualShifts = emptyMap(),
             autoAlignApplied = false,
             registrationReport = null,
@@ -280,6 +317,207 @@ class StudioViewModel(
         val project = _uiState.value.activeProject ?: return
         repository.updateProject(project.copy(disabledImagePaths = currentDisabled))
         scheduleDebouncedFusion(delayMs = 0L)
+    }
+
+    fun selectImage(path: String) {
+        _uiState.value = _uiState.value.copy(selectedImagePath = path)
+    }
+
+    fun setImageWeight(path: String, weight: Float) {
+        val currentWeights = _uiState.value.imageWeights.toMutableMap()
+        currentWeights[path] = weight.coerceIn(0f, 1f)
+        _uiState.value = _uiState.value.copy(imageWeights = currentWeights)
+        val project = _uiState.value.activeProject ?: return
+        repository.updateProject(project.copy(imageWeights = currentWeights))
+        scheduleDebouncedFusion(delayMs = 280L)
+    }
+
+    fun setLayerOpacity(path: String, opacity: Float) {
+        val currentOpacities = _uiState.value.layerOpacities.toMutableMap()
+        currentOpacities[path] = opacity.coerceIn(0f, 1f)
+        _uiState.value = _uiState.value.copy(layerOpacities = currentOpacities)
+        val project = _uiState.value.activeProject ?: return
+        repository.updateProject(project.copy(layerOpacities = currentOpacities))
+        scheduleDebouncedFusion(delayMs = 280L)
+    }
+
+    fun moveImageUp(path: String) {
+        val currentOrder = _uiState.value.effectiveImageOrder.toMutableList()
+        val index = currentOrder.indexOf(path)
+        if (index > 0) {
+            val temp = currentOrder[index]
+            currentOrder[index] = currentOrder[index - 1]
+            currentOrder[index - 1] = temp
+            _uiState.value = _uiState.value.copy(customImageOrder = currentOrder)
+            val project = _uiState.value.activeProject ?: return
+            repository.updateProject(project.copy(customImageOrder = currentOrder))
+            scheduleDebouncedFusion(delayMs = 0L)
+        }
+    }
+
+    fun moveImageDown(path: String) {
+        val currentOrder = _uiState.value.effectiveImageOrder.toMutableList()
+        val index = currentOrder.indexOf(path)
+        if (index >= 0 && index < currentOrder.size - 1) {
+            val temp = currentOrder[index]
+            currentOrder[index] = currentOrder[index + 1]
+            currentOrder[index + 1] = temp
+            _uiState.value = _uiState.value.copy(customImageOrder = currentOrder)
+            val project = _uiState.value.activeProject ?: return
+            repository.updateProject(project.copy(customImageOrder = currentOrder))
+            scheduleDebouncedFusion(delayMs = 0L)
+        }
+    }
+
+    fun reverseImageOrder() {
+        val currentOrder = _uiState.value.effectiveImageOrder.reversed()
+        _uiState.value = _uiState.value.copy(customImageOrder = currentOrder)
+        val project = _uiState.value.activeProject ?: return
+        repository.updateProject(project.copy(customImageOrder = currentOrder))
+        scheduleDebouncedFusion(delayMs = 0L)
+    }
+
+    fun resetImageOrder() {
+        _uiState.value = _uiState.value.copy(customImageOrder = emptyList())
+        val project = _uiState.value.activeProject ?: return
+        repository.updateProject(project.copy(customImageOrder = emptyList()))
+        scheduleDebouncedFusion(delayMs = 0L)
+    }
+
+    fun shuffleImageOrder() {
+        val currentOrder = _uiState.value.effectiveImageOrder.shuffled()
+        _uiState.value = _uiState.value.copy(customImageOrder = currentOrder)
+        val project = _uiState.value.activeProject ?: return
+        repository.updateProject(project.copy(customImageOrder = currentOrder))
+        scheduleDebouncedFusion(delayMs = 0L)
+    }
+
+    fun toggleExposureMatch(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(exposureMatchEnabled = enabled)
+        val project = _uiState.value.activeProject ?: return
+        repository.updateProject(project.copy(exposureMatchEnabled = enabled))
+        scheduleDebouncedFusion(delayMs = 0L)
+    }
+
+    fun toggleIncludeLayersInSurpriseMix(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(includeLayersInSurpriseMix = enabled)
+    }
+
+    fun openSaveVariantDialog() {
+        _uiState.value = _uiState.value.copy(isSaveVariantDialogOpen = true)
+    }
+
+    fun closeSaveVariantDialog() {
+        _uiState.value = _uiState.value.copy(isSaveVariantDialogOpen = false)
+    }
+
+    fun saveCurrentVariant(name: String) {
+        val state = _uiState.value
+        val project = state.activeProject ?: return
+        val trimmed = name.trim().ifEmpty { "Variante ${state.variants.size + 1}" }
+
+        val newVariant = OrbitVariant(
+            name = trimmed,
+            artStyle = state.selectedArtStyle,
+            compositionStrategy = state.compositionStrategy,
+            blendMode = state.blendMode,
+            styleParams = state.styleParameters,
+            referenceImageIndex = state.selectedRefIndex,
+            disabledImagePaths = state.disabledImagePaths,
+            customImageOrder = state.customImageOrder,
+            imageWeights = state.imageWeights,
+            layerOpacities = state.layerOpacities,
+            exposureMatchEnabled = state.exposureMatchEnabled,
+            anchorX = state.anchorX,
+            anchorY = state.anchorY,
+            artisticSpreadEnabled = state.artisticSpreadEnabled,
+            maskEnabled = state.maskEnabled,
+            maskRadius = state.maskRadius,
+            maskFeather = state.maskFeather,
+            maskIntensity = state.maskIntensity,
+            offsetX = state.offsetX,
+            offsetY = state.offsetY
+        )
+
+        repository.saveVariant(project.id, newVariant)
+        val updatedProject = repository.getProject(project.id) ?: return
+        _uiState.value = _uiState.value.copy(
+            activeProject = updatedProject,
+            variants = updatedProject.variants,
+            activeVariantId = newVariant.id,
+            isSaveVariantDialogOpen = false,
+            message = "Variante '$trimmed' gespeichert"
+        )
+    }
+
+    fun applyVariant(variantId: String) {
+        val state = _uiState.value
+        val project = state.activeProject ?: return
+        val variant = state.variants.firstOrNull { it.id == variantId } ?: return
+
+        repository.applyVariant(project.id, variantId)
+        val updatedProject = repository.getProject(project.id) ?: return
+
+        _uiState.value = _uiState.value.copy(
+            activeProject = updatedProject,
+            activeVariantId = variantId,
+            selectedArtStyle = variant.artStyle,
+            compositionStrategy = variant.compositionStrategy,
+            blendMode = variant.blendMode,
+            styleParameters = variant.styleParams,
+            selectedRefIndex = variant.referenceImageIndex.coerceIn(0, (project.actualCount - 1).coerceAtLeast(0)),
+            disabledImagePaths = variant.disabledImagePaths,
+            customImageOrder = variant.customImageOrder,
+            imageWeights = variant.imageWeights,
+            layerOpacities = variant.layerOpacities,
+            exposureMatchEnabled = variant.exposureMatchEnabled,
+            anchorX = variant.anchorX,
+            anchorY = variant.anchorY,
+            artisticSpreadEnabled = variant.artisticSpreadEnabled,
+            maskEnabled = variant.maskEnabled,
+            maskRadius = variant.maskRadius,
+            maskFeather = variant.maskFeather,
+            maskIntensity = variant.maskIntensity,
+            offsetX = variant.offsetX,
+            offsetY = variant.offsetY,
+            message = "Variante '${variant.name}' geladen"
+        )
+        loadReferenceBitmap(updatedProject, variant.referenceImageIndex)
+        scheduleDebouncedFusion(delayMs = 0L)
+    }
+
+    fun duplicateVariant(variantId: String) {
+        val project = _uiState.value.activeProject ?: return
+        repository.duplicateVariant(project.id, variantId)
+        val updatedProject = repository.getProject(project.id) ?: return
+        _uiState.value = _uiState.value.copy(
+            activeProject = updatedProject,
+            variants = updatedProject.variants,
+            message = "Variante dupliziert"
+        )
+    }
+
+    fun renameVariant(variantId: String, newName: String) {
+        val project = _uiState.value.activeProject ?: return
+        repository.renameVariant(project.id, variantId, newName)
+        val updatedProject = repository.getProject(project.id) ?: return
+        _uiState.value = _uiState.value.copy(
+            activeProject = updatedProject,
+            variants = updatedProject.variants,
+            message = "Variante umbenannt"
+        )
+    }
+
+    fun deleteVariant(variantId: String) {
+        val project = _uiState.value.activeProject ?: return
+        repository.deleteVariant(project.id, variantId)
+        val updatedProject = repository.getProject(project.id) ?: return
+        _uiState.value = _uiState.value.copy(
+            activeProject = updatedProject,
+            variants = updatedProject.variants,
+            activeVariantId = if (_uiState.value.activeVariantId == variantId) null else _uiState.value.activeVariantId,
+            message = "Variante gelöscht"
+        )
     }
 
     fun setSelectiveMask(
@@ -400,6 +638,28 @@ class StudioViewModel(
         val currentStrategy = _uiState.value.compositionStrategy
         undoStyleParameters = currentParams
         undoCompositionStrategy = currentStrategy
+        undoImageOrder = _uiState.value.customImageOrder
+        undoImageWeights = _uiState.value.imageWeights
+        undoLayerOpacities = _uiState.value.layerOpacities
+
+        var nextOrder = _uiState.value.customImageOrder
+        var nextWeights = _uiState.value.imageWeights
+        var nextOpacities = _uiState.value.layerOpacities
+
+        if (_uiState.value.includeLayersInSurpriseMix) {
+            val project = _uiState.value.activeProject
+            if (project != null && project.imagePaths.isNotEmpty()) {
+                nextOrder = _uiState.value.effectiveImageOrder.shuffled()
+                val mw = mutableMapOf<String, Float>()
+                val mo = mutableMapOf<String, Float>()
+                for (p in project.imagePaths) {
+                    mw[p] = (0.35f + Random.nextFloat() * 0.65f)
+                    mo[p] = (0.25f + Random.nextFloat() * 0.75f)
+                }
+                nextWeights = mw
+                nextOpacities = mo
+            }
+        }
 
         fun r(min: Float, max: Float) = (min + Random.nextFloat() * (max - min))
 
@@ -466,6 +726,9 @@ class StudioViewModel(
 
         _uiState.value = _uiState.value.copy(
             styleParameters = newParams,
+            customImageOrder = nextOrder,
+            imageWeights = nextWeights,
+            layerOpacities = nextOpacities,
             canUndo = true,
             message = "Überraschungs-Mix angewendet"
         )
@@ -475,15 +738,24 @@ class StudioViewModel(
     fun undoSurpriseMix() {
         val prevParams = undoStyleParameters ?: return
         val prevStrategy = undoCompositionStrategy ?: _uiState.value.compositionStrategy
+        val prevOrder = undoImageOrder ?: _uiState.value.customImageOrder
+        val prevWeights = undoImageWeights ?: _uiState.value.imageWeights
+        val prevOpacities = undoLayerOpacities ?: _uiState.value.layerOpacities
 
         _uiState.value = _uiState.value.copy(
             styleParameters = prevParams,
             compositionStrategy = prevStrategy,
+            customImageOrder = prevOrder,
+            imageWeights = prevWeights,
+            layerOpacities = prevOpacities,
             canUndo = false,
             message = "Vorherige Parameter wiederhergestellt"
         )
         undoStyleParameters = null
         undoCompositionStrategy = null
+        undoImageOrder = null
+        undoImageWeights = null
+        undoLayerOpacities = null
         scheduleDebouncedFusion(delayMs = 0L)
     }
 
@@ -578,7 +850,11 @@ class StudioViewModel(
                 maskRadius = state.maskRadius,
                 maskFeather = state.maskFeather,
                 maskIntensity = state.maskIntensity,
-                imageCount = project.activeCount
+                imageCount = project.activeCount,
+                customImageOrder = state.customImageOrder,
+                imageWeights = state.imageWeights,
+                layerOpacities = state.layerOpacities,
+                exposureMatchEnabled = state.exposureMatchEnabled
             )
 
             // Redundant calculation avoidance: Skip if parameters haven't changed and a render already exists
@@ -611,13 +887,18 @@ class StudioViewModel(
                 maskEnabled = state.maskEnabled,
                 maskRadius = state.maskRadius,
                 maskFeather = state.maskFeather,
-                maskIntensity = state.maskIntensity
+                maskIntensity = state.maskIntensity,
+                customImageOrder = state.customImageOrder,
+                imageWeights = state.imageWeights,
+                layerOpacities = state.layerOpacities,
+                exposureMatchEnabled = state.exposureMatchEnabled
             )
             repository.updateProject(updatedProject)
 
             try {
+                val effectivePaths = state.effectiveImageOrder
                 val result = OrbitFusionEngine.renderFusion(
-                    imagePaths = project.imagePaths,
+                    imagePaths = effectivePaths,
                     referenceIndex = state.selectedRefIndex,
                     artStyle = state.selectedArtStyle,
                     compositionStrategy = state.compositionStrategy,
@@ -637,6 +918,9 @@ class StudioViewModel(
                     maskFeather = state.maskFeather,
                     maskIntensity = state.maskIntensity,
                     projectId = project.id,
+                    imageWeights = state.imageWeights,
+                    layerOpacities = state.layerOpacities,
+                    exposureMatchEnabled = state.exposureMatchEnabled,
                     onProgress = { progress ->
                         if (thisGen == renderGeneration) {
                             _uiState.value = _uiState.value.copy(renderProgress = progress)
@@ -754,8 +1038,9 @@ class StudioViewModel(
             try {
                 val exportStartTime = System.currentTimeMillis()
                 // Re-compute freshly from original raw images and current style parameters!
+                val effectivePaths = state.effectiveImageOrder
                 val exportBitmap = OrbitFusionEngine.renderFusion(
-                    imagePaths = project.imagePaths,
+                    imagePaths = effectivePaths,
                     referenceIndex = refIndex,
                     artStyle = artStyle,
                     compositionStrategy = state.compositionStrategy,
@@ -775,6 +1060,9 @@ class StudioViewModel(
                     maskFeather = state.maskFeather,
                     maskIntensity = state.maskIntensity,
                     projectId = null, // Ensure export never uses downsampled preview cache
+                    imageWeights = state.imageWeights,
+                    layerOpacities = state.layerOpacities,
+                    exposureMatchEnabled = state.exposureMatchEnabled,
                     onProgress = { progress ->
                         _uiState.value = _uiState.value.copy(exportProgress = progress)
                     }

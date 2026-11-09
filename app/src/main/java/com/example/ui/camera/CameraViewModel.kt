@@ -130,6 +130,29 @@ class CameraViewModel(
         }
     }
 
+    fun applyInTheRoundTemplate() {
+        selectMode(OrbitCaptureMode.ORBIT)
+        selectTargetCount(20)
+        _uiState.value = _uiState.value.copy(
+            isGhostOverlayEnabled = true,
+            ghostOverlayAlpha = 0.45f,
+            ghostReferenceMode = "LAST"
+        )
+        val proj = _uiState.value.activeProject
+        if (proj != null) {
+            val updated = proj.copy(
+                mode = OrbitCaptureMode.ORBIT,
+                targetCount = 20,
+                ghostOverlayEnabled = true,
+                ghostOverlayAlpha = 0.45f,
+                ghostReferenceMode = "PREVIOUS"
+            )
+            repository.updateProject(updated)
+            _uiState.value = _uiState.value.copy(activeProject = updated)
+            loadGhostOverlayFromProject(updated)
+        }
+    }
+
     fun toggleGrid() {
         _uiState.value = _uiState.value.copy(isGridVisible = !_uiState.value.isGridVisible)
     }

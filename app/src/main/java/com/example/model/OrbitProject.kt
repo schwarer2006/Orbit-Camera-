@@ -32,6 +32,10 @@ enum class OrbitBlendMode(
         title = "Ausgewogen",
         description = "Harmonische Mittelung mit dynamischem Referenzfokus"
     ),
+    SEQUENTIAL_LAYERS(
+        title = "Sequenzielle Ebenen",
+        description = "Schrittweise Alpha-Überlagerung mit individueller Ebenenreihenfolge und Deckkraft"
+    ),
     LIGHTEN(
         title = "Lichtspuren (Lighten)",
         description = "Bevorzugt hellere Tonwerte und Lichtstrukturen"
@@ -63,6 +67,7 @@ enum class OrbitBlendMode(
     companion object {
         fun fromString(value: String?): OrbitBlendMode {
             return when (value) {
+                "SEQUENTIAL", "SEQUENTIAL_LAYERS" -> SEQUENTIAL_LAYERS
                 "LIGHTEN", "LIGHTEN_ADDITIVE" -> LIGHTEN
                 "MULTIPLY", "MULTIPLY_DENSITY" -> MULTIPLY
                 "SCREEN" -> SCREEN
@@ -72,6 +77,31 @@ enum class OrbitBlendMode(
         }
     }
 }
+
+data class OrbitVariant(
+    val id: String = UUID.randomUUID().toString(),
+    val name: String,
+    val createdAt: Long = System.currentTimeMillis(),
+    val artStyle: OrbitArtStyle = OrbitArtStyle.IN_THE_ROUND,
+    val compositionStrategy: OrbitCompositionStrategy = OrbitCompositionStrategy.SUBJECT_CENTERED,
+    val blendMode: OrbitBlendMode = OrbitBlendMode.WEIGHTED_AVERAGE,
+    val styleParams: OrbitStyleParameters = OrbitArtStyle.IN_THE_ROUND.defaultParameters,
+    val referenceImageIndex: Int = 0,
+    val disabledImagePaths: Set<String> = emptySet(),
+    val customImageOrder: List<String> = emptyList(),
+    val imageWeights: Map<String, Float> = emptyMap(),
+    val layerOpacities: Map<String, Float> = emptyMap(),
+    val exposureMatchEnabled: Boolean = false,
+    val anchorX: Float = 0.5f,
+    val anchorY: Float = 0.5f,
+    val artisticSpreadEnabled: Boolean = false,
+    val maskEnabled: Boolean = false,
+    val maskRadius: Float = 0.35f,
+    val maskFeather: Float = 0.25f,
+    val maskIntensity: Float = 0.70f,
+    val offsetX: Float = 0f,
+    val offsetY: Float = 0f
+)
 
 data class OrbitProject(
     val id: String = UUID.randomUUID().toString(),
@@ -105,7 +135,15 @@ data class OrbitProject(
     val maskEnabled: Boolean = false,
     val maskRadius: Float = 0.35f,
     val maskFeather: Float = 0.25f,
-    val maskIntensity: Float = 0.70f
+    val maskIntensity: Float = 0.70f,
+    // V1.1 Creative Fusion Expansion fields
+    val customImageOrder: List<String> = emptyList(),
+    val imageWeights: Map<String, Float> = emptyMap(), // path -> weight (0.0 .. 1.0, default 1.0)
+    val layerOpacities: Map<String, Float> = emptyMap(), // path -> opacity (0.0 .. 1.0, default 1.0)
+    val exposureMatchEnabled: Boolean = false,
+    val variants: List<OrbitVariant> = emptyList(),
+    val activeVariantId: String? = null,
+    val layerMaskPaths: Map<String, String> = emptyMap() // Preparation for selective layer masks
 ) {
     val actualCount: Int
         get() = imagePaths.size
@@ -115,6 +153,17 @@ data class OrbitProject(
 
     val activeImagePaths: List<String>
         get() = imagePaths.filter { it !in disabledImagePaths }
+
+    val orderedImagePaths: List<String>
+        get() {
+            if (customImageOrder.isEmpty()) return imagePaths
+            val validCustom = customImageOrder.filter { it in imagePaths }
+            val missing = imagePaths.filter { it !in validCustom }
+            return validCustom + missing
+        }
+
+    val orderedActiveImagePaths: List<String>
+        get() = orderedImagePaths.filter { it !in disabledImagePaths }
 
     val isCompleted: Boolean
         get() = actualCount >= targetCount

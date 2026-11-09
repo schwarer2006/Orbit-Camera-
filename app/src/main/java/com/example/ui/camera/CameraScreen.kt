@@ -587,7 +587,7 @@ fun CameraScreen(
                             horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
                             Text("Ziel:", fontSize = 10.sp, color = SlateLight100.copy(alpha = 0.7f))
-                            listOf(30, 50, 75, 100).forEach { count ->
+                            listOf(20, 30, 50, 75, 100).forEach { count ->
                                 val selected = target == count
                                 Box(
                                     modifier = Modifier
